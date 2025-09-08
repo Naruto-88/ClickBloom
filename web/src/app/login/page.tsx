@@ -9,8 +9,8 @@ export default function Login(){
   return (
     <div className="container" style={{display:'grid',gridTemplateColumns:'1.1fr .9fr',gap:32,minHeight:'100vh',alignItems:'center'}}>
       <section>
-        <h1 style={{fontSize:48,margin:0,fontWeight:800}}>ClickRank‑style SEO</h1>
-        <p className="muted" style={{maxWidth:520}}>Skyrocket your organic traffic in minutes, not months. Analyze, audit and optimize your entire site with AI‑assisted workflows.</p>
+        <h1 style={{fontSize:48,margin:0,fontWeight:800}}>ClickBloom</h1>
+        <p className="muted" style={{maxWidth:520}}>Skyrocket your organic traffic in minutes, not months. Analyze, audit and optimize your entire site with AI-assisted workflows.</p>
       </section>
       <section className="card" style={{maxWidth:520, margin:'0 0 0 auto'}}>
         <h2 style={{marginTop:0}}>Sign In</h2>
@@ -26,3 +26,4 @@ export default function Login(){
     </div>
   )
 }
+
