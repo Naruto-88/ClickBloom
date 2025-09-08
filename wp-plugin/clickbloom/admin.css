@@ -1,0 +1,13 @@
+/* Minimal admin styles for ClickBloom */
+.cr-grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }
+.cr-grid-2{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+.cr-card{ background:#fff; border:1px solid #ccd0d4; border-radius:8px; padding:16px; }
+.cr-muted{ color:#666; }
+.cr-badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid transparent; }
+.cr-badge.ok{ background:#e6ffed; color:#0a7a30; border-color:#bfe5ca; }
+.cr-badge.warn{ background:#fff7e6; color:#7a4a0a; border-color:#e5d0bf; }
+.cr-list{ margin-left:18px; }
+.cr-sub{ margin-top:14px; }
+.cr-toggle{ display:block; margin:8px 0; }
+.cr-danger{ border:1px solid #d63638; background:#fff5f5; }
+

@@ -1,0 +1,21 @@
+﻿# Global ignores
+node_modules/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# Next.js / build outputs
+.next/
+.next-*/
+out/
+dist/
+coverage/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# App data
+web-data/

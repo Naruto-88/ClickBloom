@@ -1,0 +1,40 @@
+import { NextRequest, NextResponse } from 'next/server'
+import OpenAI from 'openai'
+import { load } from 'cheerio'
+
+export const runtime = 'nodejs'
+
+async function extract(url: string){
+  const res = await fetch(url, { headers: { 'user-agent':'Mozilla/5.0 (compatible; ClickBloom/1.0)' } })
+  const html = await res.text()
+  const $ = load(html)
+  const title = $('title').first().text().trim()
+  const meta = $('meta[name="description"]').attr('content')||''
+  const text = $('body').text().replace(/\s+/g,' ').trim().slice(0, 4000)
+  return { title, meta, text }
+}
+
+export async function POST(req: NextRequest){
+  try{
+    const { url, keywords } = await req.json()
+    if(!url) return NextResponse.json({ ok:false, error:'Missing url' }, { status: 400 })
+    const apiKey = process.env.OPENAI_API_KEY
+    if(!apiKey) return NextResponse.json({ ok:false, error:'Missing OPENAI_API_KEY' }, { status: 500 })
+    const openai = new OpenAI({ apiKey })
+    const ctx = await extract(url)
+    const prompt = `Write an SEO meta description for the page below.
+Rules: 140-160 characters, compelling, natural language, include primary keyword if provided, no quotes.
+Primary keyword(s): ${(Array.isArray(keywords)?keywords:[]).join(', ')||'N/A'}
+Title: ${ctx.title}
+Existing meta: ${ctx.meta||'-'}
+Content sample: ${ctx.text}`
+    const r = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [ { role:'user', content: prompt } ],
+      temperature: 0.4
+    })
+    const out = r.choices?.[0]?.message?.content?.trim()?.replace(/^"|"$/g,'') || ''
+    return NextResponse.json({ ok:true, meta: out })
+  }catch(e:any){ return NextResponse.json({ ok:false, error: e?.message||'meta failed' }, { status: 500 }) }
+}
+
