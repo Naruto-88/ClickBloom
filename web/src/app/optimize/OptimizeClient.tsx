@@ -11,7 +11,7 @@ type Row = { url: string, clicks?: number, impressions?: number, ctr?: number, p
 
 function activeSiteId(){ return (typeof window!=='undefined' && localStorage.getItem('activeWebsiteId')) || undefined }
 function gscSiteUrl(id?: string){ if(!id) return undefined; try{ return JSON.parse(localStorage.getItem('integrations:'+id)||'{}').gscSite as string|undefined }catch{ return undefined } }
-function loadSaved(id?: string){ if(!id) return [] as Row[]; try{ return JSON.parse(localStorage.getItem('optimize:'+id)||'[]') }catch{ return [] } }
+function loadSaved(id?: string): Row[]{ if(!id) return [] as Row[]; try{ return JSON.parse(localStorage.getItem('optimize:'+id)||'[]') as Row[] }catch{ return [] as Row[] } }
 function saveSaved(id: string, rows: Row[]){ localStorage.setItem('optimize:'+id, JSON.stringify(rows)) }
 
 export default function OptimizeClient(){
@@ -66,7 +66,7 @@ export default function OptimizeClient(){
       // Merge with saved rows: update metrics for existing URLs instead of keeping old values
       const saved = loadSaved(siteId)
       const arrMap = new Map<string, Row>(arr.map(a => [a.url, a]))
-      const merged = saved.map(s => ({ ...s, ...(arrMap.get(s.url) || {}) }))
+      const merged: Row[] = saved.map((s: Row) => ({ ...s, ...(arrMap.get(s.url) || {}) }))
       // add any new URLs not in saved
       arr.forEach(a => { if(!merged.find(m => m.url === a.url)) merged.push(a) })
 
@@ -89,7 +89,7 @@ export default function OptimizeClient(){
   const addUrl = () => {
     const u = prompt('Enter page URL')
     if(!u) return
-    const next = [...rows, { url: u, status:'NOT_ANALYZED' }]
+    const next: Row[] = [...rows, { url: u, status: 'NOT_ANALYZED' as Row['status'] }]
     setRows(next); if(siteId) saveSaved(siteId, next)
   }
 
@@ -114,7 +114,7 @@ export default function OptimizeClient(){
     const ok = data?.ok
     if(siteId){ localStorage.setItem(`optimizeResult:${siteId}:${u}`, JSON.stringify(data)) }
     // Flip status automatically after successful AI optimize
-    const next = rows.map(r=> r.url===u ? { ...r, status: ok? 'OPTIMIZED' : 'NOT_OPTIMIZED' } : r)
+    const next: Row[] = rows.map(r=> r.url===u ? { ...r, status: (ok? 'OPTIMIZED' : 'NOT_OPTIMIZED') as Row['status'] } : r)
     setRows(next); if(siteId) saveSaved(siteId!, next)
   }
 
@@ -123,7 +123,7 @@ export default function OptimizeClient(){
   }
 
   const remove = (u:string) => { const next = rows.filter(r=> r.url!==u); setRows(next); if(siteId) saveSaved(siteId,next) }
-  const markOptimized = (u:string, val:boolean) => { const next = rows.map(r=> r.url===u ? { ...r, status: val? 'OPTIMIZED' : 'NOT_OPTIMIZED' } : r); setRows(next); if(siteId) saveSaved(siteId!, next) }
+  const markOptimized = (u:string, val:boolean) => { const next: Row[] = rows.map(r=> r.url===u ? { ...r, status: (val? 'OPTIMIZED' : 'NOT_OPTIMIZED') as Row['status'] } : r); setRows(next); if(siteId) saveSaved(siteId!, next) }
 
   const filtered = useMemo(()=> rows.filter(r=> {
       if(query && !r.url.toLowerCase().includes(query.toLowerCase())) return false
@@ -276,7 +276,7 @@ export default function OptimizeClient(){
         <div className="pagination">
           <div>
             <label className="muted" style={{marginRight:8}}>Rows per page</label>
-            <select className="page-size" value={pageSize} onChange={e=>setPage(Math.min(page, Math.ceil(filtered.length / Number(e.target.value))) ) || setPageSize(Math.min(100, Number(e.target.value)))}>
+            <select className="page-size" value={pageSize} onChange={e=>{ const newSize = Math.min(100, Number(e.target.value)); const maxPage = Math.max(1, Math.ceil(filtered.length / newSize)); setPage(Math.min(page, maxPage)); setPageSize(newSize); }}>
               {[10,25,50,100].map(n=> <option key={n} value={n}>{n}</option>)}
             </select>
             <span className="muted" style={{marginLeft:10}}>{(page-1)*pageSize + 1}-{Math.min(page*pageSize, filtered.length)} of {filtered.length}</span>

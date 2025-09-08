@@ -2,8 +2,9 @@
 import { signIn } from "next-auth/react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
+import { Suspense } from "react"
 
-export default function Login(){
+function LoginInner(){
   const search = useSearchParams()
   const error = search?.get('error')
   return (
@@ -27,3 +28,10 @@ export default function Login(){
   )
 }
 
+export default function Login(){
+  return (
+    <Suspense>
+      <LoginInner/>
+    </Suspense>
+  )
+}
