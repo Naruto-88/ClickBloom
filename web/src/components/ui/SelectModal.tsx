@@ -27,7 +27,7 @@ export default function SelectModal({ open, title, items, getKey, getLabel, onSe
       </div>
       <div className="actions">
         <button className="btn secondary" onClick={onClose}>Close</button>
-        <button className="btn" onClick={()=>{ if(selected) onSelect(selected) }}>Save</button>
+        <button className="btn" onClick={()=>{ if(selected){ onSelect(selected); onClose(); } }}>Save</button>
       </div>
     </Modal>
   )

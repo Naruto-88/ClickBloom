@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 
 export type SiteRecord = { id: string; name: string; url: string; industry?: string; description?: string; language?: string; country?: string; createdAt?: number }
 
-export default function SiteSettingsModal({ open, onClose, site, onSave, onDelete, onRecrawl }:{ open:boolean, onClose:()=>void, site: SiteRecord|undefined, onSave:(s: SiteRecord)=>void, onDelete:(id:string)=>void, onRecrawl:(id:string)=>void }){
+export default function SiteSettingsModal({ open, onClose, site, onSave, onDelete, onRecrawl, onOpenIntegrations }:{ open:boolean, onClose:()=>void, site: SiteRecord|undefined, onSave:(s: SiteRecord)=>void, onDelete:(id:string)=>void, onRecrawl:(id:string)=>void, onOpenIntegrations?:()=>void }){
   const initial = useMemo(()=> site ? { ...site } : undefined, [site])
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
@@ -128,7 +128,9 @@ export default function SiteSettingsModal({ open, onClose, site, onSave, onDelet
             </div>
             <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85}}><GrayIcon name="sliders"/> <span>Global Settings</span></div>
             <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85}}><GrayIcon name="compass"/> <span>Crawler settings</span></div>
-            <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85}}><GrayIcon name="plug"/> <span>Integrations</span></div>
+            <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85, cursor:'pointer'}} onClick={()=> onOpenIntegrations && onOpenIntegrations()} title="Open Integrations">
+              <GrayIcon name="plug"/> <span>Integrations</span>
+            </div>
             <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85}}><GrayIcon name="robot"/> <span>Automation settings</span></div>
             <div style={{display:'flex', alignItems:'center', gap:10, color:'#cbd0ea', opacity:.85}}><GrayIcon name="logs"/> <span>Activity Logs</span></div>
           </div>

@@ -724,13 +724,20 @@ add_action('rest_api_init', function(){
       if(empty($opt['api_key'])){ $opt['api_key'] = $token; }
       // Token must match stored key
       if($token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
-      if(!empty($api_base)) $opt['api_base'] = $api_base;
-      clickbloom_update_options($opt);
-      // Try immediate validation if we have a base
-      $valid = clickbloom_is_activated_strict();
-      $opt = clickbloom_get_options(); $opt['activated'] = $valid; clickbloom_update_options($opt);
-      clickbloom_log('config', ['api_base'=>$opt['api_base'], 'activated'=>$valid]);
-      return new WP_REST_Response(['ok'=>true, 'activated'=>$valid], 200);
+      if(!empty($api_base)){
+        $opt['api_base'] = $api_base; clickbloom_update_options($opt);
+        // Validate against remote when API base provided
+        $valid = clickbloom_is_activated_strict();
+        $opt = clickbloom_get_options(); $opt['activated'] = $valid; clickbloom_update_options($opt);
+        clickbloom_log('config', ['api_base'=>$opt['api_base'], 'activated'=>$valid]);
+        return new WP_REST_Response(['ok'=>true, 'activated'=>$valid], 200);
+      } else {
+        // Local dev or no license server configured: mark activated based on key presence
+        $opt['activated'] = (!empty($opt['api_key']) && strlen($opt['api_key']) > 12) ? true : false;
+        clickbloom_update_options($opt);
+        clickbloom_log('config', ['api_base'=>'', 'activated'=>$opt['activated']]);
+        return new WP_REST_Response(['ok'=>true, 'activated'=>$opt['activated']], 200);
+      }
     },
     'permission_callback' => '__return_true'
   ]);

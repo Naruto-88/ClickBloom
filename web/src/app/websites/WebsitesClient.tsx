@@ -33,6 +33,7 @@ export default function WebsitesClient(){
   const [connecting, setConnecting] = useState<'connect'|'recheck'|null>(null)
   const [localDev, setLocalDev] = useState(false)
   const [crawlBusy, setCrawlBusy] = useState(false)
+  const [credits, setCredits] = useState<string>('')
 
   useEffect(()=>{
     const s = loadSites(); setSites(s); const id = localStorage.getItem('activeWebsiteId') || s[0]?.id; setActiveId(id || undefined)
@@ -40,6 +41,12 @@ export default function WebsitesClient(){
 
   const active = useMemo(()=> sites.find(x=>x.id===activeId), [sites, activeId])
   const integ = useMemo(()=> loadIntegrations(activeId), [activeId, integVer])
+  useEffect(()=>{ setKeyInput(integ.wpToken||''); if(integ.wpToken){
+    // Load remaining credits for display
+    fetch('/api/license/validate', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ key: integ.wpToken, site_url: active?.url||'' }) })
+      .then(r=> r.json()).then(j=>{ const c = j?.crawl_credits; setCredits(c===undefined? 'Unlimited' : String(c)) }).catch(()=> setCredits(''))
+  } else { setCredits('') }
+  }, [integ.wpToken, active?.url])
   useEffect(()=>{ setKeyInput(integ.wpToken||'') }, [integ.wpToken])
   const filtered = useMemo(()=>{ const s=(q||"").toLowerCase().trim(); if(!s) return sites; return sites.filter(w=> (w.name||"").toLowerCase().includes(s) || (w.url||"").toLowerCase().includes(s)) }, [sites, q])
   const isVerified = (id: string)=>{ const i=loadIntegrations(id); return !!(i.wpEndpoint && i.wpToken) }
@@ -90,8 +97,14 @@ export default function WebsitesClient(){
     }catch(e:any){ alert(`Failed to load GA4 properties: ${e?.message||e}`) }
   }
 
-  const selectGsc = (key: string) => { if(!activeId) return; saveIntegrations(activeId, { ...integ, gscSite: key }); setShowGscModal(false) }
-  const selectGa4 = (key: string) => { if(!activeId) return; saveIntegrations(activeId, { ...integ, ga4Property: key }); setShowGa4Modal(false) }
+  const selectGsc = (key: string) => {
+    if(!activeId) return; saveIntegrations(activeId, { ...integ, gscSite: key });
+    setIntegVer(v=>v+1); setShowGscModal(false); setOpenInteg(false);
+  }
+  const selectGa4 = (key: string) => {
+    if(!activeId) return; saveIntegrations(activeId, { ...integ, ga4Property: key });
+    setIntegVer(v=>v+1); setShowGa4Modal(false); setOpenInteg(false);
+  }
   const saveWp = (e: FormEvent)=>{ e.preventDefault(); if(!activeId) return; const form = e.target as HTMLFormElement; const fd = new FormData(form); const wpEndpoint = String(fd.get('wpEndpoint')||''); const wpToken = String(fd.get('wpToken')||''); saveIntegrations(activeId, { ...integ, wpEndpoint, wpToken }); setIntegVer(v=>v+1); alert('Saved WordPress integration'); }
   const testWp = async ()=>{
     if(!activeId) return
@@ -172,9 +185,114 @@ export default function WebsitesClient(){
         </div>
       </div>
 
+      {/* Integrations card (Connected Accounts) */}
+      <div className="card" style={{marginTop:16}}>
+        <div className="panel-title"><strong>Connected Accounts</strong></div>
+        <div style={{display:'grid', gap:12}}>
+          {/* Google Search Console */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>G</div>
+              <div>
+                <div style={{fontWeight:700}}>Google Search Console</div>
+                <div className="muted">Connect to your Google Search Console account.</div>
+              </div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {integ.gscSite && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
+              {integ.gscSite ? (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, gscSite: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
+              ) : (
+                <button className="btn" onClick={connectGSC}>Connect</button>
+              )}
+            </div>
+          </div>
+          {/* Google Analytics */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>A</div>
+              <div>
+                <div style={{fontWeight:700}}>Google Analytics (GA4)</div>
+                <div className="muted">Connect to your Google Analytics property.</div>
+              </div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {integ.ga4Property && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
+              {integ.ga4Property ? (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, ga4Property: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
+              ) : (
+                <button className="btn" onClick={connectGA4}>Connect</button>
+              )}
+            </div>
+          </div>
+          {/* WordPress */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>W</div>
+              <div>
+                <div style={{fontWeight:700}}>WordPress</div>
+                <div className="muted">Connect your WordPress site to publish changes.</div>
+              </div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
+              {(integ.wpEndpoint && integ.wpToken) ? (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, wpEndpoint: undefined, wpToken: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
+              ) : (
+                <button className="btn" onClick={()=> setOpenInteg(true)}>Connect</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Integration modal */}
       <Modal open={openInteg} onClose={()=>setOpenInteg(false)}>
-        <h3>WordPress Integration</h3>
+        <h3>Integrations</h3>
+        <div style={{display:'grid', gap:12}}>
+          {/* GSC */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div>
+              <div style={{fontWeight:700}}>Google Search Console</div>
+              <div className="muted">Connect to your Search Console account.</div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {integ.gscSite && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
+              {integ.gscSite ? (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, gscSite: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
+              ) : (
+                <button className="btn" onClick={connectGSC}>Connect</button>
+              )}
+            </div>
+          </div>
+          {/* GA4 */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div>
+              <div style={{fontWeight:700}}>Google Analytics (GA4)</div>
+              <div className="muted">Connect to your GA4 property.</div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {integ.ga4Property && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
+              {integ.ga4Property ? (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, ga4Property: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
+              ) : (
+                <button className="btn" onClick={connectGA4}>Connect</button>
+              )}
+            </div>
+          </div>
+          {/* WordPress */}
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+            <div>
+              <div style={{fontWeight:700}}>WordPress</div>
+              <div className="muted">Securely publish changes to your site.</div>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Verified</span>}
+            </div>
+          </div>
+        </div>
+        <div style={{height:10}}/>
+        {/* WordPress Quick Connect */}
         <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
           <label>License Key</label>
           <input className="input" value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="CBL-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" />
@@ -183,6 +301,7 @@ export default function WebsitesClient(){
           <span className={`badge ${integ.wpEndpoint && integ.wpToken ? 'ok':'warn'}`}>{integ.wpEndpoint && integ.wpToken ? 'VERIFIED':'NOT CONNECTED'}</span>
           <button className="btn" onClick={connectAuto} disabled={connecting!==null}>{connecting==='connect'? <span className="spinner"/> : 'Connect WordPress'}</button>
           <button className="btn secondary" onClick={testWp} disabled={connecting!==null}>{connecting==='recheck'? <span className="spinner"/> : 'Recheck'}</button>
+          {credits && (<span className="badge">Credits: {credits}</span>)}
         </div>
         <div style={{marginTop:8}}>
           <label className="muted" style={{display:'flex', alignItems:'center', gap:8}}>
@@ -193,14 +312,16 @@ export default function WebsitesClient(){
           <summary className="muted">Advanced: Override Endpoint</summary>
           <input className="input" value={overrideEp} onChange={e=>setOverrideEp(e.target.value)} placeholder="https://site.com/wp-json/clickbloom/v1/update" />
         </details>
-        <div className="muted" style={{marginTop:10}}>Your key and endpoint are used server-side for secure publishing. The endpoint field is hidden by default and only needed if your site has a non-standard REST path.</div>
+        <div className="muted" style={{marginTop:10}}>Your key and endpoint are used server-side for secure publishing.</div>
       </Modal>
 
       <AddWebsiteModal open={openAdd} onClose={()=>setOpenAdd(false)} onCreate={addWebsite}/>
       <SiteSettingsModal open={openSettings} onClose={()=>setOpenSettings(false)} site={active}
         onSave={(updated)=>{ const idx = sites.findIndex(s=>s.id===updated.id); if(idx>=0){ const next=[...sites]; next[idx]=updated; setSites(next); saveSites(next); } setOpenSettings(false) }}
         onDelete={(id)=>{ const next = sites.filter(s=>s.id!==id); setSites(next); saveSites(next); if(activeId===id){ setActiveId(next[0]?.id) } setOpenSettings(false) }}
-        onRecrawl={async(id)=>{ const s = sites.find(x=>x.id===id); if(!s) return; try{ setCrawlBusy(true); const lic = loadIntegrations(id).wpToken||''; const res = await fetch('/api/crawl/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId:id, url:s.url, key: lic, maxPages: 200, maxDepth: 3 }) }); const out = await res.json(); if(out?.ok){ alert(`Crawled ${out.count} pages`) } else { alert(out?.error||'Recrawl failed') } }catch(e:any){ alert(`Recrawl failed: ${e?.message||e}`) } finally { setCrawlBusy(false) } }}/>
+        onRecrawl={async(id)=>{ const s = sites.find(x=>x.id===id); if(!s) return; try{ setCrawlBusy(true); const lic = loadIntegrations(id).wpToken||''; const res = await fetch('/api/crawl/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId:id, url:s.url, key: lic, maxPages: 200, maxDepth: 3 }) }); const out = await res.json(); if(out?.ok){ alert(`Crawled ${out.count} pages`) } else { alert(out?.error||'Recrawl failed') } }catch(e:any){ alert(`Recrawl failed: ${e?.message||e}`) } finally { setCrawlBusy(false) } }}
+        onOpenIntegrations={()=>{ setOpenSettings(false); setTimeout(()=> setOpenInteg(true), 50) }}
+      />
       <Modal open={crawlBusy} onClose={()=>{}}>
         <h3>Crawling website...</h3>
         <div className="muted">This may take a minute for larger sites.</div>
