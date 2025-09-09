@@ -7,7 +7,7 @@ import SelectModal from "@/components/ui/SelectModal"
 import { useEffect, useMemo, useState, FormEvent } from "react"
 import { signIn } from "next-auth/react"
 
-type Integration = { gscSite?: string, ga4Property?: string, wpEndpoint?: string, wpToken?: string }
+type Integration = { gscSite?: string, gscLabel?: string, ga4Property?: string, ga4Label?: string, wpEndpoint?: string, wpToken?: string }
 type Website = WebsiteType
 
 function loadSites(): Website[]{ try{ return JSON.parse(localStorage.getItem('websites')||'[]') }catch{ return [] } }
@@ -98,11 +98,17 @@ export default function WebsitesClient(){
   }
 
   const selectGsc = (key: string) => {
-    if(!activeId) return; saveIntegrations(activeId, { ...integ, gscSite: key });
+    if(!activeId) return;
+    const it = gscList.find((x:any)=> (x.siteUrl||x.url)===key) || {} as any
+    const label = `${(it.siteUrl||key)}${it.permissionLevel? ` (${it.permissionLevel})`: ''}`
+    saveIntegrations(activeId, { ...integ, gscSite: key, gscLabel: label });
     setIntegVer(v=>v+1); setShowGscModal(false); setOpenInteg(false);
   }
   const selectGa4 = (key: string) => {
-    if(!activeId) return; saveIntegrations(activeId, { ...integ, ga4Property: key });
+    if(!activeId) return;
+    const it = ga4List.find((x:any)=> (x.property||x.propertyName||x.name)===key) || {} as any
+    const label = (it.displayName||it.property||it.name||key)
+    saveIntegrations(activeId, { ...integ, ga4Property: key, ga4Label: label });
     setIntegVer(v=>v+1); setShowGa4Modal(false); setOpenInteg(false);
   }
   const saveWp = (e: FormEvent)=>{ e.preventDefault(); if(!activeId) return; const form = e.target as HTMLFormElement; const fd = new FormData(form); const wpEndpoint = String(fd.get('wpEndpoint')||''); const wpToken = String(fd.get('wpToken')||''); saveIntegrations(activeId, { ...integ, wpEndpoint, wpToken }); setIntegVer(v=>v+1); alert('Saved WordPress integration'); }
