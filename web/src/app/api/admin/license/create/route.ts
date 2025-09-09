@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createLicense } from '@/lib/license'
+import { createLicense, activateLicense } from '@/lib/license'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +12,7 @@ export async function POST(req: NextRequest){
         max_sites: p.get('max_sites')? Number(p.get('max_sites')): undefined,
         expires_at: p.get('expires_at')||undefined,
         crawl_credits: p.get('crawl_credits')? Number(p.get('crawl_credits')): undefined,
+        site_url: p.get('site_url')||undefined,
       }
     })
     const { key, license } = await createLicense({
@@ -21,7 +22,8 @@ export async function POST(req: NextRequest){
       expires_at: body.expires_at ?? null,
       crawl_credits: body.crawl_credits
     })
+    // Optional site binding on creation
+    if(body.site_url){ await activateLicense(key, String(body.site_url)) }
     return NextResponse.json({ ok:true, key, license })
   }catch(e:any){ return NextResponse.json({ ok:false, error: e?.message||'create failed' }, { status:500 }) }
 }
-
