@@ -25,12 +25,26 @@ export default function OptimizeClient(){
   const [pageSize, setPageSize] = useState(10)
   const [loading, setLoading] = useState(false)
   const [openRange, setOpenRange] = useState(false)
+  const [crawlMerged, setCrawlMerged] = useState<Row[]>([])
 
   const siteId = activeSiteId()
   const siteUrl = gscSiteUrl(siteId)
   const ga4Property = (typeof window!=='undefined' && siteId ? (JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}').ga4Property as string|undefined) : undefined)
 
   useEffect(()=>{ setRows(loadSaved(siteId)) }, [siteId])
+
+  // Load crawled pages for this site and merge into the grid (in addition to GSC)
+  useEffect(()=>{
+    if(!siteId) return
+    fetch(`/api/crawl/results?siteId=${encodeURIComponent(siteId)}`)
+      .then(r=> r.ok? r.json(): null)
+      .then(j=>{
+        if(!j?.pages){ setCrawlMerged([]); return }
+        const list = (j.pages as any[]).map(p=> ({ url: String(p.url||'') })) as Row[]
+        setCrawlMerged(list)
+      })
+      .catch(()=> setCrawlMerged([]))
+  }, [siteId])
 
   const fmt = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
@@ -70,6 +84,9 @@ export default function OptimizeClient(){
       // add any new URLs not in saved
       arr.forEach(a => { if(!merged.find(m => m.url === a.url)) merged.push(a) })
 
+      // Merge any pages from crawl results not present yet
+      crawlMerged.forEach(c=>{ if(c.url && !merged.find(m=> m.url===c.url)) merged.push(c) })
+
       // Optionally load GA4 sessions and merge by pageLocation (full URL)
       if(ga4Property){
         try{
@@ -84,7 +101,7 @@ export default function OptimizeClient(){
     }finally{ setLoading(false) }
   }
 
-  useEffect(()=>{ fetchPages(); setPage(1) }, [siteUrl, range.from, range.to])
+  useEffect(()=>{ fetchPages(); setPage(1) }, [siteUrl, range.from, range.to, crawlMerged.length])
 
   const addUrl = () => {
     const u = prompt('Enter page URL')

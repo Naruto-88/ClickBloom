@@ -49,7 +49,7 @@ export default function PageClient(){
   const [qcEndpoint, setQcEndpoint] = useState('')
   const [qcToken, setQcToken] = useState('')
   const [qcBusy, setQcBusy] = useState<'save'|'test'|null>(null)
-  const [crawlList, setCrawlList] = useState<string[]>([])
+  const [crawlList, setCrawlList] = useState<any[]>([])
   const [crawlQuery, setCrawlQuery] = useState('')
 
   const siteId = activeSite(); const siteUrl = gscSiteUrl(siteId)
@@ -60,9 +60,17 @@ export default function PageClient(){
     // Load crawled pages for this site if available
     if(!siteId) return
     fetch(`/api/crawl/results?siteId=${encodeURIComponent(siteId)}`).then(r=> r.ok? r.json(): null).then(j=>{
-      if(j?.pages){ const urls = (j.pages as any[]).map(p=> p.url as string).filter(Boolean); setCrawlList(urls) }
+      if(j?.pages){ setCrawlList(j.pages as any[]) }
     }).catch(()=>{})
   }, [siteId])
+
+  const stat = (p:any)=>{
+    const clamp=(n:number,min:number,max:number)=> Math.max(min, Math.min(max, n))
+    const title = (p.title||'').trim(); const t = title? (title.length>=30 && title.length<=65? 'OPTIMIZED':'NOT_OPTIMIZED') : 'MISSING'
+    const meta = (p.meta||'').trim(); const m = meta? (meta.length>=120 && meta.length<=160? 'OPTIMIZED':'NOT_OPTIMIZED') : 'MISSING'
+    const alt = (()=>{ const tot=Number(p.images?.total||0); const withAlt=Number(p.images?.withAlt||0); if(tot===0) return 'OPTIMIZED'; if(withAlt===0) return 'MISSING'; return (withAlt/tot)>=0.8? 'OPTIMIZED':'NOT_OPTIMIZED' })()
+    return { t, m, alt }
+  }
 
   const loadTrend = async ()=>{
     if(!siteUrl || !url) return
@@ -334,11 +342,21 @@ export default function PageClient(){
             <div className="panel-title"><strong>Pages</strong></div>
             <input className="input" placeholder="Search pages" value={crawlQuery} onChange={e=>setCrawlQuery(e.target.value)} />
             <div style={{marginTop:10, display:'grid', gap:8, maxHeight: '60vh', overflow:'auto'}}>
-              {crawlList.filter(u=> !crawlQuery || u.toLowerCase().includes(crawlQuery.toLowerCase())).slice(0,300).map((p,i)=> (
-                <div key={i} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
-                  <a href={`/optimize/page?u=${encodeURIComponent(btoa(p))}`} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={p}>{p}</a>
-                </div>
-              ))}
+              {crawlList.filter(x=>{ const u=String(x.url||''); return !crawlQuery || u.toLowerCase().includes(crawlQuery.toLowerCase()) }).slice(0,300).map((p,i)=>{
+                const s = stat(p)
+                const chip = (label:string, v:string)=> (
+                  <span style={{fontSize:11, padding:'2px 6px', borderRadius:999, border:'1px solid '+(v==='OPTIMIZED'?'#1e3d2f':'#3a2a1e'), background:(v==='OPTIMIZED'?'#0b1f16':'#2a1212'), color:(v==='OPTIMIZED'?'#34d399':'#ffb86b')}}>{label}</span>
+                )
+                const u = String(p.url)
+                return (
+                  <div key={i} style={{display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', gap:8}}>
+                    <a href={`/optimize/page?u=${encodeURIComponent(btoa(u))}`} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={u}>{u}</a>
+                    <div style={{display:'flex', gap:6}}>
+                      {chip('T', s.t)} {chip('M', s.m)} {chip('ALT', s.alt)}
+                    </div>
+                  </div>
+                )
+              })}
               {crawlList.length===0 && <div className="muted">No crawl results found.</div>}
             </div>
           </div>
