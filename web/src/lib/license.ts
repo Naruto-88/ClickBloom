@@ -219,6 +219,12 @@ export async function spendCrawlCreditsByKey(key: string, amount: number): Promi
   return { ok:true }
 }
 
+export async function setLicenseExpiry(license_id: string, expires_at: string|null){
+  const db = getSqlite()
+  if(db){ db.prepare('UPDATE licenses SET expires_at=? WHERE id=?').run(expires_at, license_id); return }
+  const s = await jsonLoad(); const lic = s.licenses.find(l=> l.id===license_id); if(lic){ lic.expires_at = expires_at; await jsonSave(s) }
+}
+
 export async function revokeActivation(activation_id: string){
   const db = getSqlite()
   if(db){ db.prepare('UPDATE activations SET revoked=1 WHERE id=?').run(activation_id); return }
