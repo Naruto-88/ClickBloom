@@ -69,7 +69,10 @@ export default function PageClient(){
     const title = (p.title||'').trim(); const t = title? (title.length>=30 && title.length<=65? 'OPTIMIZED':'NOT_OPTIMIZED') : 'MISSING'
     const meta = (p.meta||'').trim(); const m = meta? (meta.length>=120 && meta.length<=160? 'OPTIMIZED':'NOT_OPTIMIZED') : 'MISSING'
     const alt = (()=>{ const tot=Number(p.images?.total||0); const withAlt=Number(p.images?.withAlt||0); if(tot===0) return 'OPTIMIZED'; if(withAlt===0) return 'MISSING'; return (withAlt/tot)>=0.8? 'OPTIMIZED':'NOT_OPTIMIZED' })()
-    return { t, m, alt }
+    const schema = (Number(p.schemaCount||0)>0)? 'OPTIMIZED':'MISSING'
+    const headings = (()=>{ const h1 = (p.h1||'').trim(); const h2c = Number(p.h2Count||0); if(!h1) return 'MISSING'; const okLen = h1.length>=15 && h1.length<=70; return (okLen && h2c>=2)? 'OPTIMIZED':'NOT_OPTIMIZED' })()
+    const content = (()=>{ const w = Number(p.words||0); if(w===0) return 'MISSING'; return w>=300? 'OPTIMIZED':'NOT_OPTIMIZED' })()
+    return { t, m, alt, schema, headings, content }
   }
 
   const loadTrend = async ()=>{
@@ -351,8 +354,8 @@ export default function PageClient(){
                 return (
                   <div key={i} style={{display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', gap:8}}>
                     <a href={`/optimize/page?u=${encodeURIComponent(btoa(u))}`} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={u}>{u}</a>
-                    <div style={{display:'flex', gap:6}}>
-                      {chip('T', s.t)} {chip('M', s.m)} {chip('ALT', s.alt)}
+                    <div style={{display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end'}}>
+                      {chip('T', s.t)} {chip('M', s.m)} {chip('ALT', s.alt)} {chip('SCH', s.schema)} {chip('H', s.headings)} {chip('C', s.content)}
                     </div>
                   </div>
                 )

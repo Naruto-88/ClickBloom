@@ -6,7 +6,7 @@ import { spendCrawlCreditsByKey } from '@/lib/license'
 
 export const runtime = 'nodejs'
 
-type PageResult = { url: string, title?: string, meta?: string, h1?: string, words?: number, schemaCount?: number, canonical?: string, images?: { total:number, withAlt:number } }
+type PageResult = { url: string, title?: string, meta?: string, h1?: string, h2Count?: number, words?: number, schemaCount?: number, canonical?: string, images?: { total:number, withAlt:number } }
 
 function sameHost(a:string, b:string){ try{ return new URL(a).hostname === new URL(b).hostname }catch{ return false } }
 function norm(u:string){ try{ const url = new URL(u); url.hash=''; return url.toString() }catch{ return u } }
@@ -28,11 +28,12 @@ async function crawlSite(startUrl:string, maxPages:number, maxDepth:number){
         const title = $('title').first().text().trim()
         const meta = $('meta[name="description"]').attr('content')||''
         const h1 = $('h1').first().text().trim()
+        const h2Count = $('h2').length
         const text = $('body').text().replace(/\s+/g,' ').trim(); const words = text? text.split(/\s+/).length: 0
         const schemaCount = $('script[type="application/ld+json"]').length
         const canonical = $('link[rel="canonical"]').attr('href')||''
         const totalImgs = $('img').length; let withAlt=0; $('img').each((_,el)=>{ if($(el).attr('alt')) withAlt++ })
-        results.push({ url:item.url, title, meta, h1, words, schemaCount, canonical, images:{ total: totalImgs, withAlt } })
+        results.push({ url:item.url, title, meta, h1, h2Count, words, schemaCount, canonical, images:{ total: totalImgs, withAlt } })
         $('a[href]').each((_,el)=>{
           try{
             const href = $(el).attr('href')||''; if(!href) return
@@ -65,4 +66,3 @@ export async function POST(req: NextRequest){
     return NextResponse.json({ ok:true, count: pages.length })
   }catch(e:any){ return NextResponse.json({ ok:false, error: e?.message||'crawl failed' }, { status:500 }) }
 }
-
