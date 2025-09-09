@@ -295,7 +295,10 @@ export default function WebsitesClient(){
         {/* WordPress Quick Connect */}
         <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
           <label>License Key</label>
-          <input className="input" value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="CBL-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" />
+          <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8}}>
+            <input className="input" value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="CBL-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" />
+            <button className="btn secondary" type="button" title="Copy key" onClick={()=>{ if(keyInput){ navigator.clipboard?.writeText(keyInput).catch(()=>{}); } }} style={{height:44}}>Copy</button>
+          </div>
         </div>
         <div style={{display:'flex', alignItems:'center', gap:12, marginTop:10}}>
           <span className={`badge ${integ.wpEndpoint && integ.wpToken ? 'ok':'warn'}`}>{integ.wpEndpoint && integ.wpToken ? 'VERIFIED':'NOT CONNECTED'}</span>

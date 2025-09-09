@@ -16,7 +16,7 @@ export default function LicensesClient(){
   }
   useEffect(()=>{ load() },[])
 
-  const copy = (s:string)=>{ if(!s) return; navigator.clipboard?.writeText(s).catch(()=>{}); }
+  const copy = (s:string)=>{ if(!s) return; navigator.clipboard?.writeText(s).catch(()=>{}); alert('Copied'); }
 
   const doCreate = async ()=>{
     const body:any = { email:gen.email||undefined, plan:gen.plan, max_sites:Number(gen.max_sites)||1 }
@@ -40,12 +40,17 @@ export default function LicensesClient(){
         <input className="input" placeholder="Plan" value={gen.plan} onChange={e=>setGen({...gen, plan:e.target.value})}/>
         <input className="input" placeholder="Max Sites" value={gen.max_sites} onChange={e=>setGen({...gen, max_sites: Number(e.target.value)||1})}/>
         <input className="input" placeholder="Crawl Credits" value={gen.crawl_credits} onChange={e=>setGen({...gen, crawl_credits:e.target.value})}/>
-        <label style={{gridColumn:'1 / -1'}}>Expires At (YYYY-MM-DD or empty)</label>
-        <input className="input" placeholder="2026-12-31" value={gen.expires_at} onChange={e=>setGen({...gen, expires_at:e.target.value})} style={{gridColumn:'1 / -1'}}/>
+        <label style={{gridColumn:'1 / -1'}}>Expires At</label>
+        <input className="input" type="date" value={gen.expires_at} onChange={e=>setGen({...gen, expires_at:e.target.value})} style={{gridColumn:'1 / -1'}}/>
       </div>
       <div className="actions">
         <button className="btn" onClick={doCreate}>Generate</button>
-        {genKey && <button className="btn secondary" onClick={()=>copy(genKey)}>Copy New Key</button>}
+        {genKey && (
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <input className="input" readOnly value={genKey} style={{maxWidth:360}}/>
+            <button className="btn secondary" type="button" onClick={()=>copy(genKey)} title="Copy key">Copy</button>
+          </div>
+        )}
       </div>
 
       <div className="toolbar" style={{marginTop:8}}>
@@ -62,10 +67,15 @@ export default function LicensesClient(){
             const used = (actsByLic[l.id]||[]).length
             // Update credits and expiry inline
             const [credits, setCreds] = [l.crawl_credits, (v:number)=>fetch('/api/admin/license/update', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ license_id:l.id, crawl_credits:v }) }).then(()=>load())]
-            const [exp, setExp] = [l.expires_at||'', (v:string)=>fetch('/api/admin/license/update', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ license_id:l.id, crawl_credits: l.crawl_credits||0, expires_at:v||null }) }).then(()=>load())]
+            const [exp, setExp] = [l.expires_at||'', (v:string)=>fetch('/api/admin/license/update', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ license_id:l.id, expires_at: (v||null) }) }).then(()=>load())]
             return (
               <tr key={l.id}>
-                <td>{l.id.slice(0,8)}...</td>
+                <td>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    <span>{l.id.slice(0,8)}...</span>
+                    <button className="btn secondary" type="button" title="Copy ID" onClick={()=>copy(l.id)} style={{height:28, padding:'0 8px'}}>Copy ID</button>
+                  </div>
+                </td>
                 <td>{l.plan||'-'}</td>
                 <td><span style={{fontSize:12, padding:'2px 6px', borderRadius:999, ...badgeStyle }}>{status}</span></td>
                 <td>{used} / {l.max_sites}</td>
@@ -75,7 +85,7 @@ export default function LicensesClient(){
                   </div>
                 </td>
                 <td>
-                  <input className="input" defaultValue={exp} onBlur={e=> setExp(e.target.value)} style={{width:140}}/>
+                  <input className="input" type="date" defaultValue={exp} onBlur={e=> setExp(e.target.value)} style={{width:160}}/>
                 </td>
                 <td>
                   <button className="btn secondary" onClick={()=>doDelete(l.id)}>Delete</button>
@@ -88,4 +98,3 @@ export default function LicensesClient(){
     </div>
   )
 }
-
