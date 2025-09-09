@@ -12,6 +12,16 @@ define('CLICKBLOOM_VERSION', '0.1.0');
 define('CLICKBLOOM_OPTION_KEY', 'clickbloom_options');
 define('CLICKBLOOM_LOG_TABLE', 'clickbloom_logs');
 
+// Environment guard: fail gracefully on old PHP
+if (version_compare(PHP_VERSION, '7.2', '<')) {
+  if (is_admin()) {
+    add_action('admin_notices', function(){
+      echo '<div class="notice notice-error"><p>ClickBloom requires PHP 7.2 or higher. Your server is running '.esc_html(PHP_VERSION).'. Please upgrade PHP to activate the plugin.</p></div>';
+    });
+  }
+  return; // Stop loading the plugin
+}
+
 // Helpers
 function clickbloom_get_options() {
   $defaults = [
@@ -40,6 +50,40 @@ function clickbloom_get_options() {
 
 function clickbloom_update_options($opt){
   update_option(CLICKBLOOM_OPTION_KEY, $opt);
+}
+
+// Strict activation check against remote license (if configured)
+function clickbloom_is_activated_strict(){
+  $opt = clickbloom_get_options();
+  if(empty($opt['api_key'])) return false;
+  if(!empty($opt['api_base'])){
+    $endpoint = rtrim($opt['api_base'],'/').'/api/license/validate';
+    $body = wp_json_encode([ 'key'=>$opt['api_key'], 'site_url'=>home_url('/') ]);
+    $res = wp_remote_post($endpoint, [ 'timeout'=>10, 'headers'=>['Content-Type'=>'application/json'], 'body'=>$body ]);
+    if(is_wp_error($res)) return !empty($opt['activated']);
+    $json = json_decode(wp_remote_retrieve_body($res), true);
+    $valid = !empty($json['valid']);
+    if(!$valid){ $opt['activated']=false; clickbloom_update_options($opt); }
+    return $valid;
+  }
+  return !empty($opt['activated']);
+}
+
+// Shared top navigation tabs
+function clickbloom_render_tabs($active){
+  echo '<nav class="cr-tabs">';
+  $tabs = [
+    ['slug'=>'clickbloom','icon'=>'dashicons-dashboard','label'=>'Dashboard'],
+    ['slug'=>'clickbloom-activation','icon'=>'dashicons-admin-network','label'=>'Activation'],
+    ['slug'=>'clickbloom-settings','icon'=>'dashicons-admin-generic','label'=>'Settings'],
+    ['slug'=>'clickbloom-logs','icon'=>'dashicons-clipboard','label'=>'Logs'],
+  ];
+  foreach($tabs as $t){
+    $href = esc_url(admin_url('admin.php?page='.$t['slug']));
+    $cls = $active===$t['slug'] ? 'cr-tab active' : 'cr-tab';
+    echo '<a class="'.$cls.'" href="'.$href.'"><span class="dashicons '.$t['icon'].'"></span> '.$t['label'].'</a>';
+  }
+  echo '</nav>';
 }
 
 function clickbloom_log($action, $details = [], $post_id = null){
@@ -86,8 +130,8 @@ add_filter('cron_schedules', function($s){
 
 // Admin menu
 add_action('admin_menu', function(){
-  add_menu_page('ClickBloom', 'ClickBloom', 'manage_options', 'clickbloom', 'clickbloom_render_dashboard', 'dashicons-chart-pie', 66);
-  add_submenu_page('clickbloom', 'Dashboard', 'Dashboard', 'manage_options', 'clickbloom', 'clickbloom_render_dashboard');
+  add_menu_page('ClickBloom', 'ClickBloom', 'manage_options', 'clickbloom', 'clickbloom_render_dashboard_v2', 'dashicons-chart-pie', 66);
+  add_submenu_page('clickbloom', 'Dashboard', 'Dashboard', 'manage_options', 'clickbloom', 'clickbloom_render_dashboard_v2');
   add_submenu_page('clickbloom', 'Activation', 'Activation', 'manage_options', 'clickbloom-activation', 'clickbloom_render_activation');
   add_submenu_page('clickbloom', 'Settings', 'Settings', 'manage_options', 'clickbloom-settings', 'clickbloom_render_settings');
   add_submenu_page('clickbloom', 'Logs', 'Logs', 'manage_options', 'clickbloom-logs', 'clickbloom_render_logs');
@@ -95,7 +139,10 @@ add_action('admin_menu', function(){
 
 add_action('admin_enqueue_scripts', function($hook){
   if (strpos($hook, 'clickbloom') !== false){
+    // Ensure Dashicons are available for our icons
+    wp_enqueue_style('dashicons');
     wp_enqueue_style('clickbloom-admin', plugins_url('admin.css', __FILE__), [], CLICKBLOOM_VERSION);
+    wp_enqueue_script('clickbloom-admin', plugins_url('admin.js', __FILE__), [], CLICKBLOOM_VERSION, true);
   }
 });
 
@@ -112,6 +159,96 @@ add_action('admin_init', function(){
 // Admin pages
 function clickbloom_card_open(){ echo '<div class="cr-card">'; }
 function clickbloom_card_close(){ echo '</div>'; }
+
+// New dashboard UI (matches provided mock)
+function clickbloom_render_dashboard_v2(){
+  if(!current_user_can('manage_options')) return; $opt = clickbloom_get_options();
+  // Validate quickly so the status reflects current state
+  clickbloom_run_validation(true);
+
+  $activated = clickbloom_is_activated_strict();
+  $last_sync = !empty($opt['last_sync']) ? esc_html(date('Y-m-d H:i', intval($opt['last_sync']))) : 'Never';
+  $endpoint = home_url('/wp-json/clickbloom/v1/update');
+  $mods = isset($opt['modules']) && is_array($opt['modules']) ? $opt['modules'] : [];
+  $active_count = 0; $total = 0; foreach($mods as $k=>$v){ if($k==='toggle_all') continue; $total++; if(!empty($v)) $active_count++; }
+
+  echo '<div class="wrap">';
+  // Header
+  echo '<div class="cr-header">';
+  echo '<div><h1 class="cr-title">Dashboard</h1><p class="cr-subtitle">Welcome back! Here\'s a quick overview of your integration.</p></div>';
+  $sync_url = esc_url(admin_url('admin-post.php?action=clickbloom_sync&_wpnonce='.wp_create_nonce('clickbloom_sync')));
+  $copy = esc_attr($endpoint);
+  $key_copy_btn = '';
+  if(!empty($opt['api_key'])){
+    $key_copy_btn = ' <button type="button" class="cr-btn secondary cb-copy-key" data-copy="'.esc_attr($opt['api_key']).'"><span class="dashicons dashicons-admin-network"></span> Copy API Key</button>';
+  }
+  echo '<div class="cr-actions">'
+      .'<a class="cr-btn" href="'.$sync_url.'"><span class="dashicons dashicons-update"></span> Sync Data from ClickBloom.ai</a>'
+      .' <button type="button" class="cr-btn secondary cb-copy" data-copy="'.$copy.'"><span class="dashicons dashicons-admin-links"></span> Copy Endpoint URL</button>'
+      . $key_copy_btn
+      .'</div>';
+  echo '</div>';
+
+  // Tabs for navigation
+  clickbloom_render_tabs('clickbloom');
+
+  // KPI row (3 tiles)
+  echo '<div class="cr-row">';
+  echo '<div class="cr-kpi '.($activated? 'ok':'warn').'">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-yes"></span></div>'
+      .'<div><div class="cr-label">Integration Status</div><div class="cr-value">'.($activated? 'Active':'Inactive').'</div></div>'
+      .'</div>';
+  echo '<div class="cr-kpi">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-admin-plugins"></span></div>'
+      .'<div><div class="cr-label">Active Modules</div><div class="cr-value">'.$active_count.' / '.$total.'</div></div>'
+      .'</div>';
+  $wh_label = $activated ? 'Configured & Ready' : 'Not Configured';
+  echo '<div class="cr-kpi '.($activated? 'ok':'warn').'">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-admin-links"></span></div>'
+      .'<div><div class="cr-label">Webhook URL</div><div class="cr-value">'.$wh_label.'</div></div>'
+      .'</div>';
+  echo '</div>';
+
+  // Body two columns
+  echo '<div class="cr-grid-2">';
+  // Getting Started
+  echo '<div class="cr-card">';
+  echo '<div class="cr-section-title">Getting Started</div>';
+  echo '<p class="cr-p">Your WordPress site is now connected to ClickBloom.ai. Here\'s how to get the most out of our platform:</p>';
+  echo '<ol class="cr-list">'
+      .'<li><strong>Configure Your Settings</strong><br/>Visit the Settings tab to toggle on the specific SEO automations you want to use.</li>'
+      .'<li><strong>Manage Optimizations on ClickBloom.ai</strong><br/>Log in to your ClickBloom.ai dashboard to manage pages, review AI suggestions, and push updates to your site.</li>'
+      .'<li><strong>Monitor Activity</strong><br/>Use the Logs tab to see a transparent history of all updates sent from our platform to your website.</li>'
+      .'</ol>';
+  echo '</div>';
+
+  // Quick Links
+  echo '<div class="cr-card">';
+  echo '<div class="cr-section-title">Quick Links</div>';
+  echo '<div class="cr-links">';
+  echo '<a class="cr-item" href="'.esc_url(admin_url('admin.php?page=clickbloom-activation')).'">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-admin-network"></span></div>'
+      .'<div><div><strong>Manage API Key</strong></div><div class="cr-muted">Update your activation settings</div></div>'
+      .'</a>';
+  echo '<a class="cr-item" href="'.esc_url(admin_url('admin.php?page=clickbloom-settings')).'">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-admin-generic"></span></div>'
+      .'<div><div><strong>Configure Settings</strong></div><div class="cr-muted">Choose which automations to enable</div></div>'
+      .'</a>';
+  echo '<a class="cr-item" href="'.esc_url(admin_url('admin.php?page=clickbloom-logs')).'">'
+      .'<div class="cr-ic"><span class="dashicons dashicons-clipboard"></span></div>'
+      .'<div><div><strong>View Activity Logs</strong></div><div class="cr-muted">See a history of recent changes</div></div>'
+      .'</a>';
+  echo '</div>';
+  echo '</div>';
+  echo '</div>'; // end grid-2
+
+  // Small footer meta
+  echo '<p class="cr-muted" style="margin-top:12px">Last Sync: '. $last_sync .' · Endpoint: <code>'. esc_html($endpoint) .'</code></p>';
+
+  // Copy helpers now handled in admin.js
+
+  echo '</div>'; // wrap
+}
 
 function clickbloom_render_dashboard(){
   if(!current_user_can('manage_options')) return; $opt = clickbloom_get_options();
@@ -146,63 +283,186 @@ function clickbloom_render_dashboard(){
 
 function clickbloom_render_activation(){
   if(!current_user_can('manage_options')) return; $opt = clickbloom_get_options();
-  echo '<div class="wrap"><h1>Activation</h1>';
-  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+  echo '<div class="wrap">';
+  clickbloom_render_tabs('clickbloom-activation');
+  echo '<div class="cr-card">';
+  echo '<div class="cr-section-title">Plugin Activation</div>';
+  echo '<p class="cr-p cr-muted">Activate the plugin by entering your API key to connect your site to the ClickBloom.ai platform.</p>';
+  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" style="margin-top:12px">';
   wp_nonce_field('clickbloom_activate');
   echo '<input type="hidden" name="action" value="clickbloom_activate" />';
-  echo '<table class="form-table">';
-  echo '<tr><th scope="row">ClickBloom API Key</th><td><input type="text" name="api_key" value="'.esc_attr($opt['api_key']).'" class="regular-text" placeholder="CBL-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"/></td></tr>';
-  echo '<tr><th scope="row">API Base (optional)</th><td><input type="url" name="api_base" value="'.esc_attr(isset($opt['api_base'])?$opt['api_base']:'').'" class="regular-text" placeholder="https://app.example.com"/></td></tr>';
-  echo '</table>';
-  echo '<p><button class="button button-primary">Save & Activate</button></p>';
+  echo '<div class="cr-field">';
+  echo '<label class="cr-label" for="cb_api_key">Your API Key</label>';
+  echo '<input id="cb_api_key" class="cr-input" type="text" name="api_key" value="'.esc_attr($opt['api_key']).'" placeholder="CBL-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" />';
+  echo '</div>';
+  // Optional app API base (advanced)
+  $api_base_val = esc_attr(isset($opt['api_base'])?$opt['api_base']:'');
+  echo '<details style="margin-top:10px"><summary class="cr-muted">Advanced: App API Base (optional)</summary>';
+  echo '<div class="cr-field"><label class="cr-label" for="cb_api_base">API Base</label><input id="cb_api_base" class="cr-input" type="url" name="api_base" value="'.$api_base_val.'" placeholder="https://app.example.com" /></div>';
+  echo '</details>';
+  $endpoint = home_url('/wp-json/clickbloom/v1/update');
+  $copy = esc_attr($endpoint);
+  echo '<div class="cr-actions-row" style="gap:10px">';
+  echo '<button class="cr-btn secondary cb-copy" type="button" data-copy="'.$copy.'"><span class="dashicons dashicons-admin-links"></span> Copy Endpoint URL</button>';
+  echo '<button class="cr-btn secondary cb-copy-key" type="button"><span class="dashicons dashicons-admin-network"></span> Copy API Key</button>';
+  echo '<button class="cr-btn" type="submit"><span class="dashicons dashicons-admin-network"></span> Save & Activate Key</button>';
+  echo '</div>';
   echo '</form>';
+  echo '</div>';
   echo '</div>';
 }
 
 function clickbloom_render_settings(){
   if(!current_user_can('manage_options')) return; $opt = clickbloom_get_options(); $m=$opt['modules'];
-  echo '<div class="wrap"><h1>Settings</h1>';
-  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+  echo '<div class="wrap">';
+  clickbloom_render_tabs('clickbloom-settings');
+  echo '<div class="cr-card">';
+  echo '<div class="cr-settings-head"><div class="cr-section-title">Automation Modules</div>';
+  echo '<label class="cr-switch" title="Toggle All"><input id="cb_toggle_all" type="checkbox" '.checked($m['toggle_all'], true, false).'><span class="cr-slider"></span></label></div>';
+  echo '<p class="cr-p cr-muted">Enable or disable specific automation features across your entire site.</p>';
+
+  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" style="margin-top:12px">';
   wp_nonce_field('clickbloom_save_settings');
   echo '<input type="hidden" name="action" value="clickbloom_save_settings" />';
-  echo '<h2 class="cr-sub">Automation Modules</h2>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="toggle_all" '.checked($m['toggle_all'], true, false).'/> Toggle All</label>';
-  echo '<div class="cr-grid-2">';
-  echo '<div class="cr-card"><h3>Content & On-Page</h3>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="title" '.checked($m['title'], true, false).'/> Title Optimization</label>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="meta" '.checked($m['meta'], true, false).'/> Meta Description Optimization</label>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="image_alt" '.checked($m['image_alt'], true, false).'/> Image Alt Text Generation</label>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="link_titles" '.checked($m['link_titles'], true, false).'/> Automatic Link Titles</label></div>';
-  echo '<div class="cr-card"><h3>Technical SEO</h3>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="schema" '.checked($m['schema'], true, false).'/> Schema Markup Generation</label>';
-  echo '<label class="cr-toggle"><input type="checkbox" name="canonical" '.checked($m['canonical'], true, false).'/> Canonical Tag Optimization</label></div>';
-  echo '</div>';
-  echo '<p><button class="button button-primary">Save Module Settings</button></p>';
+  echo '<input id="cb_toggle_all_hidden" type="hidden" name="toggle_all" value="'.($m['toggle_all']? '1':'').'" />';
+
+  // Content & On-Page
+  echo '<h3 style="margin-top:8px">Content & On-Page</h3>';
+  // Title
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-text"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Title Optimization</strong><small>Automatically generate and apply SEO-friendly page and post titles.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="title" '.checked($m['title'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+  // Meta
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-edit"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Meta Description Optimization</strong><small>Automatically generate and apply SEO-friendly meta descriptions.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="meta" '.checked($m['meta'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+  // Image alts
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-format-image"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Image Alt Text Generation</strong><small>Generate descriptive alt text for your images.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="image_alt" '.checked($m['image_alt'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+  // Link titles
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-admin-links"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Automatic Link Titles</strong><small>Automatically add title attributes to links that are missing them.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="link_titles" '.checked($m['link_titles'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+
+  // Technical SEO
+  echo '<h3 style="margin-top:10px">Technical SEO</h3>';
+  // Schema
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-editor-code"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Schema Markup Generation</strong><small>Apply structured data to your pages.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="schema" '.checked($m['schema'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+  // Canonical
+  echo '<div class="cr-toggle-row">'
+      .'<div class="cr-toggle-left">'
+      .'<div class="cr-toggle-icon"><span class="dashicons dashicons-admin-multisite"></span></div>'
+      .'<div class="cr-toggle-text"><strong>Canonical Tag Optimization</strong><small>Set the canonical URL for pages to prevent duplicate content issues.</small></div>'
+      .'</div>'
+      .'<label class="cr-switch"><input type="checkbox" name="canonical" '.checked($m['canonical'], true, false).'><span class="cr-slider"></span></label>'
+      .'</div>';
+
+  echo '<div class="cr-save-row"><button class="cr-btn" type="submit"><span class="dashicons dashicons-database"></span> Save Module Settings</button></div>';
   echo '</form>';
-  // Danger zone
-  echo '<div class="cr-danger cr-card"><h3>Danger Zone</h3><p>These are destructive actions. Please be certain before proceeding.</p>';
-  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+  // Toggle-All logic now handled in admin.js
+  echo '</div>'; // card
+
+  // Copy helpers now handled in admin.js
+
+  // Danger zone card
+  echo '<div class="cr-danger cr-card" style="margin-top:16px">';
+  echo '<div class="cr-section-title" style="color:#b91c1c">Danger Zone</div>';
+  echo '<p class="cr-muted">These are destructive actions. Please be certain before proceeding.</p>';
+  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" style="margin-top:8px">';
   wp_nonce_field('clickbloom_revert_all');
   echo '<input type="hidden" name="action" value="clickbloom_revert_all" />';
-  echo '<p><button class="button button-secondary">Revert All Changes</button></p>';
-  echo '</form></div>';
+  echo '<div style="display:flex; justify-content:space-between; align-items:center">'
+      .'<div><strong>Revert All Changes</strong><div class="cr-muted">Remove all ClickBloom optimizations and revert posts/pages to their previous state.</div></div>'
+      .'<button class="button button-primary" style="background:#dc2626;border-color:#b91c1c"><span class="dashicons dashicons-update-alt" style="vertical-align:middle"></span> Revert All</button>'
+      .'</div>';
+  echo '</form>';
   echo '</div>';
+
+  echo '</div>'; // wrap
 }
 
 function clickbloom_render_logs(){
   if(!current_user_can('manage_options')) return; global $wpdb; $table = $wpdb->prefix . CLICKBLOOM_LOG_TABLE;
   $rows = $wpdb->get_results("SELECT * FROM {$table} ORDER BY id DESC LIMIT 200");
-  echo '<div class="wrap"><h1>Activity Logs</h1>';
-  echo '<table class="widefat fixed striped"><thead><tr><th>Time</th><th>Post</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+  echo '<div class="wrap">';
+  clickbloom_render_tabs('clickbloom-logs');
+  echo '<div class="cr-card">';
+  echo '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">';
+  echo '<div><div class="cr-section-title">Webhook Logs</div><div class="cr-muted">A record of the most recent events received from ClickBloom.ai.</div></div>';
+  echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+  wp_nonce_field('clickbloom_clear_logs');
+  echo '<input type="hidden" name="action" value="clickbloom_clear_logs" />';
+  echo '<button class="cr-btn-danger" type="submit"><span class="dashicons dashicons-trash"></span> Clear All Logs</button>';
+  echo '</form>';
+  echo '</div>';
+
+  echo '<table class="cr-table"><thead><tr>'
+      .'<th>TIMESTAMP</th><th>LEVEL</th><th>MESSAGE</th>'
+      .'</tr></thead><tbody>';
+
   foreach($rows as $r){
     $time = esc_html($r->created_at);
-    $post = $r->post_id ? ('<a href="'.esc_url(get_edit_post_link(intval($r->post_id))).'">#'.intval($r->post_id).'</a>') : '-';
-    $action = esc_html($r->action);
-    $details = esc_html($r->details);
-    echo "<tr><td>{$time}</td><td>{$post}</td><td>{$action}</td><td><code>{$details}</code></td></tr>";
+    $level = 'info';
+    // Derive a level when possible
+    $d = json_decode($r->details, true);
+    if(is_array($d) && isset($d['error'])){ $level = 'error'; }
+    if(in_array($r->action, ['revert_all'])){ $level = 'warn'; }
+    $cls = $level==='error'? 'cr-level-error' : ($level==='warn'? 'cr-level-warn' : 'cr-level-info');
+    // Build a concise message
+    $msg = '';
+    $pid = intval($r->post_id);
+    $view = '';
+    if($pid){ $plink = get_permalink($pid); if($plink){ $view = ' <a class="cr-log-link" href="'.esc_url($plink).'" target="_blank" rel="noopener">View post</a>'; } }
+    if($r->action==='update'){
+      $keys = is_array($d)? implode(', ', array_keys($d)) : '';
+      $msg = 'Updated '.($pid? ('post #'.$pid):'site').' '.($keys? ('fields: '.$keys):'');
+    }elseif($r->action==='revert'){
+      $keys = is_array($d)? implode(', ', array_keys($d)) : '';
+      $msg = 'Reverted '.($pid? ('post #'.$pid):'post').' '.($keys? ('fields: '.$keys):'');
+    }elseif($r->action==='revert_all'){
+      $msg = 'Reverted all changes across the site';
+    }elseif($r->action==='sync'){
+      $msg = 'Manual sync triggered';
+    }elseif($r->action==='activate'){
+      $msg = !empty($d['activated']) ? 'Plugin activated' : 'Activation updated';
+    }elseif($r->action==='save_settings'){
+      $msg = 'Settings saved';
+    }else{
+      $msg = ucfirst($r->action);
+    }
+    echo '<tr>'
+        .'<td>'. $time .'</td>'
+        .'<td class="'. $cls .'">'. strtoupper($level) .'</td>'
+        .'<td>'. esc_html($msg) . $view .'</td>'
+        .'</tr>';
   }
-  if(empty($rows)) echo '<tr><td colspan="4">No logs yet.</td></tr>';
-  echo '</tbody></table></div>';
+  if(empty($rows)) echo '<tr><td colspan="3">No logs yet.</td></tr>';
+  echo '</tbody></table>';
+  echo '</div>'; // card
+  echo '</div>'; // wrap
 }
 
 // Admin handlers
@@ -227,6 +487,7 @@ add_action('admin_post_clickbloom_activate', function(){
   if(!$activated){ $activated = (!empty($api) && strlen($api) > 12); }
   $opt['activated'] = $activated;
   clickbloom_update_options($opt);
+  clickbloom_log('activate', ['activated'=>$activated]);
   wp_safe_redirect(admin_url('admin.php?page=clickbloom-activation&saved=1&activated=' . ($activated? '1':'0')));
   exit;
 });
@@ -244,6 +505,7 @@ add_action('admin_post_clickbloom_save_settings', function(){
   $m['canonical'] = isset($_POST['canonical']);
   if($m['toggle_all']){ foreach($m as $k=>$v){ if($k!=='toggle_all') $m[$k]=true; } }
   $opt['modules'] = $m; clickbloom_update_options($opt);
+  clickbloom_log('save_settings', ['modules'=>$m]);
   wp_safe_redirect(admin_url('admin.php?page=clickbloom-settings&saved=1'));
   exit;
 });
@@ -262,6 +524,15 @@ add_action('admin_post_clickbloom_validate_now', function(){
   if(!current_user_can('manage_options')) wp_die('Forbidden'); check_admin_referer('clickbloom_validate_now');
   clickbloom_run_validation(true);
   wp_safe_redirect(admin_url('admin.php?page=clickbloom&validated=1'));
+  exit;
+});
+
+// Clear logs
+add_action('admin_post_clickbloom_clear_logs', function(){
+  if(!current_user_can('manage_options')) wp_die('Forbidden'); check_admin_referer('clickbloom_clear_logs');
+  global $wpdb; $table = $wpdb->prefix . CLICKBLOOM_LOG_TABLE;
+  $wpdb->query("TRUNCATE TABLE {$table}");
+  wp_safe_redirect(admin_url('admin.php?page=clickbloom-logs&cleared=1'));
   exit;
 });
 
@@ -354,6 +625,40 @@ add_action('rest_api_init', function(){
     'permission_callback' => '__return_true'
   ]);
 
+  // Settings update from the app (allows remote toggling of modules)
+  register_rest_route('clickbloom/v1', '/settings', [
+    'methods' => 'POST',
+    'callback' => function(WP_REST_Request $req){
+      $opt = clickbloom_get_options(); $token = sanitize_text_field($req['token']);
+      if(!$opt['api_key'] || $token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
+      if(!empty($opt['api_base'])){
+        $endpoint = rtrim($opt['api_base'],'/').'/api/license/validate';
+        $body = wp_json_encode([ 'key'=>$opt['api_key'], 'site_url'=>home_url('/') ]);
+        $res = wp_remote_post($endpoint, [ 'timeout'=>8, 'headers'=>['Content-Type'=>'application/json'], 'body'=>$body ]);
+        if(!is_wp_error($res)){
+          $json = json_decode(wp_remote_retrieve_body($res), true);
+          if(empty($json['valid'])){ $opt['activated']=false; clickbloom_update_options($opt); return new WP_REST_Response(['ok'=>false,'error'=>'License invalid'], 401); }
+        }
+      }
+      if(!$opt['activated']) return new WP_REST_Response(['ok'=>false,'error'=>'Not activated'], 401);
+      $mods = $opt['modules'];
+      $body = $req->get_json_params();
+      if(isset($body['modules']) && is_array($body['modules'])){
+        foreach(['title','meta','image_alt','link_titles','schema','canonical'] as $k){ if(isset($body['modules'][$k])){ $mods[$k] = !!$body['modules'][$k]; } }
+        if(isset($body['modules']['toggle_all'])){ $mods['toggle_all'] = !!$body['modules']['toggle_all']; if($mods['toggle_all']){ foreach($mods as $k=>$v){ if($k!=='toggle_all') $mods[$k]=true; } } }
+      }
+      $opt['modules'] = $mods; clickbloom_update_options($opt); clickbloom_log('save_settings', ['modules'=>$mods]);
+      return new WP_REST_Response(['ok'=>true, 'modules'=>$mods], 200);
+    },
+    'permission_callback' => '__return_true'
+  ]);
+
+  // Lightweight ping to verify connectivity from the app
+  register_rest_route('clickbloom/v1', '/ping', [
+    'methods' => 'GET',
+    'callback' => function(){ return new WP_REST_Response(['ok'=>true, 'site'=>home_url('/')], 200); },
+    'permission_callback' => '__return_true'
+  ]);
   register_rest_route('clickbloom/v1', '/revert', [
     'methods' => 'POST',
     'callback' => function(WP_REST_Request $req){
@@ -379,6 +684,53 @@ add_action('rest_api_init', function(){
       if(isset($b['schema'])){ update_post_meta($post_id, 'clickbloom_schema', wp_json_encode($b['schema'])); }
       clickbloom_log('revert', $b, $post_id);
       return new WP_REST_Response(['ok'=>true], 200);
+    },
+    'permission_callback' => '__return_true'
+  ]);
+
+  // Provide plugin info and endpoints to the app
+  register_rest_route('clickbloom/v1', '/info', [
+    'methods' => 'GET',
+    'callback' => function(){
+      $opt = clickbloom_get_options();
+      $active = clickbloom_is_activated_strict();
+      return new WP_REST_Response([
+        'ok' => true,
+        'plugin' => 'clickbloom',
+        'version' => CLICKBLOOM_VERSION,
+        'site_url' => home_url('/'),
+        'activated' => $active,
+        'has_key' => !empty($opt['api_key']),
+        'endpoints' => [
+          'update' => home_url('/wp-json/clickbloom/v1/update'),
+          'revert' => home_url('/wp-json/clickbloom/v1/revert'),
+          'settings' => home_url('/wp-json/clickbloom/v1/settings'),
+          'config' => home_url('/wp-json/clickbloom/v1/config'),
+        ],
+      ], 200);
+    },
+    'permission_callback' => '__return_true'
+  ]);
+
+  // Remote config from the app: set API base and finalize activation
+  register_rest_route('clickbloom/v1', '/config', [
+    'methods' => 'POST',
+    'callback' => function(WP_REST_Request $req){
+      $opt = clickbloom_get_options();
+      $token = sanitize_text_field($req['token']);
+      $api_base = esc_url_raw($req['api_base']);
+      if(empty($token)) return new WP_REST_Response(['ok'=>false,'error'=>'Missing token'], 400);
+      // If no key stored yet, accept and save this token as key
+      if(empty($opt['api_key'])){ $opt['api_key'] = $token; }
+      // Token must match stored key
+      if($token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
+      if(!empty($api_base)) $opt['api_base'] = $api_base;
+      clickbloom_update_options($opt);
+      // Try immediate validation if we have a base
+      $valid = clickbloom_is_activated_strict();
+      $opt = clickbloom_get_options(); $opt['activated'] = $valid; clickbloom_update_options($opt);
+      clickbloom_log('config', ['api_base'=>$opt['api_base'], 'activated'=>$valid]);
+      return new WP_REST_Response(['ok'=>true, 'activated'=>$valid], 200);
     },
     'permission_callback' => '__return_true'
   ]);

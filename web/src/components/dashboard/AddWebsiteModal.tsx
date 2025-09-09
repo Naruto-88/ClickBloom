@@ -2,7 +2,7 @@
 import Modal from "@/components/ui/Modal"
 import { useState } from "react"
 
-export type Website = { id: string; name: string; url: string; industry?: string; description?: string }
+export type Website = { id: string; name: string; url: string; industry?: string; description?: string; createdAt?: number }
 
 export default function AddWebsiteModal({ open, onClose, onCreate }: { open: boolean, onClose: () => void, onCreate: (w: Website) => void }){
   const [name, setName] = useState("")
@@ -13,7 +13,7 @@ export default function AddWebsiteModal({ open, onClose, onCreate }: { open: boo
   const submit = () => {
     if(!name || !url) return alert('Name and URL are required')
     const id = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : String(Date.now())
-    const w: Website = { id, name, url, industry, description: desc }
+    const w: Website = { id, name, url, industry, description: desc, createdAt: Date.now() }
     onCreate(w)
     setName(""); setUrl(""); setIndustry(""); setDesc("")
   }

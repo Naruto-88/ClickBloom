@@ -1,7 +1,7 @@
 "use client"
 import { ReactNode, useEffect } from "react"
 
-export default function Modal({ open, onClose, children }: { open: boolean, onClose: () => void, children: ReactNode }){
+export default function Modal({ open, onClose, children, wide }: { open: boolean, onClose: () => void, children: ReactNode, wide?: boolean }){
   useEffect(()=>{
     const onKey = (e: KeyboardEvent) => { if(e.key==='Escape') onClose() }
     document.addEventListener('keydown', onKey)
@@ -10,10 +10,9 @@ export default function Modal({ open, onClose, children }: { open: boolean, onCl
   if(!open) return null
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className={`modal ${wide? 'modal-wide':''}`} onClick={e=>e.stopPropagation()}>
         {children}
       </div>
     </div>
   )
 }
-
