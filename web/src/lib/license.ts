@@ -8,6 +8,7 @@ export type License = {
   owner_email?: string
   plan?: string
   max_sites: number
+  crawl_credits?: number
   status: 'active'|'disabled'
   created_at: string
   expires_at?: string | null
@@ -108,7 +109,7 @@ export function normalizeUrl(u: string){
 }
 
 // High-level helpers that work across backends
-export async function createLicense(input: { email?: string, plan?: string, max_sites?: number, expires_at?: string|null }){
+export async function createLicense(input: { email?: string, plan?: string, max_sites?: number, expires_at?: string|null, crawl_credits?: number }){
   const key = genKey('CBL')
   const lic: License = {
     id: crypto.randomUUID(),
@@ -116,6 +117,7 @@ export async function createLicense(input: { email?: string, plan?: string, max_
     owner_email: input.email || undefined,
     plan: input.plan || 'standard',
     max_sites: Math.max(1, Number(input.max_sites||1)),
+    crawl_credits: typeof input.crawl_credits==='number'? Math.max(0, Math.floor(input.crawl_credits)) : undefined,
     status: 'active',
     created_at: new Date().toISOString(),
     expires_at: input.expires_at ?? null,
@@ -166,7 +168,7 @@ export async function validateLicense(key: string, site_url?: string){
     const expired = !!(lic.expires_at && new Date(lic.expires_at) < new Date())
     const used = db.prepare('SELECT * FROM activations WHERE license_id=? AND revoked=0').all(lic.id)
     const bound = site? !!used.find((a:any)=> a.site_url===site) : undefined
-    return { ok:true, valid: lic.status==='active' && !expired, plan: lic.plan, max_sites: lic.max_sites, expires_at: lic.expires_at, bound }
+    return { ok:true, valid: lic.status==='active' && !expired, plan: lic.plan, max_sites: lic.max_sites, expires_at: lic.expires_at, bound, crawl_credits: lic.crawl_credits }
   }
   const s = await jsonLoad()
   const lic = s.licenses.find(l=> l.key_hash===h)
@@ -174,13 +176,47 @@ export async function validateLicense(key: string, site_url?: string){
   const expired = !!(lic.expires_at && new Date(lic.expires_at) < new Date())
   const used = s.activations.filter(a=> a.license_id===lic.id && !a.revoked)
   const bound = site? !!used.find(a=> a.site_url===site) : undefined
-  return { ok:true, valid: lic.status==='active' && !expired, plan: lic.plan, max_sites: lic.max_sites, expires_at: lic.expires_at, bound }
+  return { ok:true, valid: lic.status==='active' && !expired, plan: lic.plan, max_sites: lic.max_sites, expires_at: lic.expires_at, bound, crawl_credits: lic.crawl_credits }
 }
 
 export async function setLicenseStatus(license_id: string, status: 'active'|'disabled'){
   const db = getSqlite()
   if(db){ db.prepare('UPDATE licenses SET status=? WHERE id=?').run(status, license_id); return }
   const s = await jsonLoad(); const lic = s.licenses.find(l=> l.id===license_id); if(lic){ lic.status=status; await jsonSave(s) }
+}
+
+export async function setCrawlCredits(license_id: string, credits: number){
+  const db = getSqlite()
+  if(db){ db.prepare('UPDATE licenses SET crawl_credits=? WHERE id=?').run(Math.max(0, Math.floor(credits)), license_id); return }
+  const s = await jsonLoad(); const lic = s.licenses.find(l=> l.id===license_id); if(lic){ lic.crawl_credits = Math.max(0, Math.floor(credits)); await jsonSave(s) }
+}
+
+export async function spendCrawlCreditsByKey(key: string, amount: number): Promise<{ ok:boolean, remaining?: number, error?: string }>{
+  const h = hashKey(key)
+  const db = getSqlite()
+  if(db){
+    const lic = db.prepare('SELECT * FROM licenses WHERE key_hash=?').get(h) as License|undefined
+    if(!lic) return { ok:false, error:'Invalid key' }
+    const left = typeof lic.crawl_credits==='number'? lic.crawl_credits : Infinity
+    if(amount>0 && isFinite(left) && left < amount) return { ok:false, error:'Insufficient crawl credits' }
+    if(isFinite(left)){
+      const next = left - amount
+      db.prepare('UPDATE licenses SET crawl_credits=? WHERE id=?').run(next, lic.id)
+      return { ok:true, remaining: next }
+    }
+    return { ok:true }
+  }
+  const s = await jsonLoad(); const lic = s.licenses.find(l=> l.key_hash===h)
+  if(!lic) return { ok:false, error:'Invalid key' }
+  const left = typeof lic.crawl_credits==='number'? lic.crawl_credits : Infinity
+  if(amount>0 && isFinite(left) && left < amount) return { ok:false, error:'Insufficient crawl credits' }
+  if(isFinite(left)){
+    lic.crawl_credits = left - amount
+    await jsonSave(s)
+    return { ok:true, remaining: lic.crawl_credits }
+  }
+  await jsonSave(s)
+  return { ok:true }
 }
 
 export async function revokeActivation(activation_id: string){

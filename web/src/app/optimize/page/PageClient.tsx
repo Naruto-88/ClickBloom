@@ -49,10 +49,20 @@ export default function PageClient(){
   const [qcEndpoint, setQcEndpoint] = useState('')
   const [qcToken, setQcToken] = useState('')
   const [qcBusy, setQcBusy] = useState<'save'|'test'|null>(null)
+  const [crawlList, setCrawlList] = useState<string[]>([])
+  const [crawlQuery, setCrawlQuery] = useState('')
 
   const siteId = activeSite(); const siteUrl = gscSiteUrl(siteId)
   const fmt = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
+
+  useEffect(()=>{
+    // Load crawled pages for this site if available
+    if(!siteId) return
+    fetch(`/api/crawl/results?siteId=${encodeURIComponent(siteId)}`).then(r=> r.ok? r.json(): null).then(j=>{
+      if(j?.pages){ const urls = (j.pages as any[]).map(p=> p.url as string).filter(Boolean); setCrawlList(urls) }
+    }).catch(()=>{})
+  }, [siteId])
 
   const loadTrend = async ()=>{
     if(!siteUrl || !url) return
@@ -318,6 +328,22 @@ export default function PageClient(){
 
   return (
     <>
+      <div style={{display:'grid', gridTemplateColumns: crawlList.length? '280px 1fr' : '1fr', gap:16}}>
+        {crawlList.length>0 && (
+          <div className="card" style={{alignSelf:'start'}}>
+            <div className="panel-title"><strong>Pages</strong></div>
+            <input className="input" placeholder="Search pages" value={crawlQuery} onChange={e=>setCrawlQuery(e.target.value)} />
+            <div style={{marginTop:10, display:'grid', gap:8, maxHeight: '60vh', overflow:'auto'}}>
+              {crawlList.filter(u=> !crawlQuery || u.toLowerCase().includes(crawlQuery.toLowerCase())).slice(0,300).map((p,i)=> (
+                <div key={i} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
+                  <a href={`/optimize/page?u=${encodeURIComponent(btoa(p))}`} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={p}>{p}</a>
+                </div>
+              ))}
+              {crawlList.length===0 && <div className="muted">No crawl results found.</div>}
+            </div>
+          </div>
+        )}
+        <div>
       {/* Quick Connect banner when no integration */}
       {!getWpConfig() && (
         <div className="card" style={{border:'1px dashed #eab308', background:'#141427', marginBottom:12}}>
@@ -345,6 +371,8 @@ export default function PageClient(){
         <KpiCard title="CTR" current={points.length? (sum('clicks')/Math.max(1,sum('impressions'))*100):0} previous={0} format={(n)=>`${n.toFixed(1)}%`} color="#fbbf24" series={points.map(p=>p.ctr)} />
         <KpiCard title="Avg. Position" current={avg('position')} previous={0} format={(n)=>n.toFixed(1)} color="#22c55e" invert series={points.map(p=>p.position)} />
       </section>
+        </div>
+      </div>
 
       <section className="grid" style={{gridTemplateColumns:'1fr .8fr', marginBottom:16}}>
         <div className="card">

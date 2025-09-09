@@ -32,6 +32,7 @@ export default function WebsitesClient(){
   const [overrideEp, setOverrideEp] = useState("")
   const [connecting, setConnecting] = useState<'connect'|'recheck'|null>(null)
   const [localDev, setLocalDev] = useState(false)
+  const [crawlBusy, setCrawlBusy] = useState(false)
 
   useEffect(()=>{
     const s = loadSites(); setSites(s); const id = localStorage.getItem('activeWebsiteId') || s[0]?.id; setActiveId(id || undefined)
@@ -199,7 +200,12 @@ export default function WebsitesClient(){
       <SiteSettingsModal open={openSettings} onClose={()=>setOpenSettings(false)} site={active}
         onSave={(updated)=>{ const idx = sites.findIndex(s=>s.id===updated.id); if(idx>=0){ const next=[...sites]; next[idx]=updated; setSites(next); saveSites(next); } setOpenSettings(false) }}
         onDelete={(id)=>{ const next = sites.filter(s=>s.id!==id); setSites(next); saveSites(next); if(activeId===id){ setActiveId(next[0]?.id) } setOpenSettings(false) }}
-        onRecrawl={async(id)=>{ const s = sites.find(x=>x.id===id); if(!s) return; try{ await fetch('/api/optimize/check', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url: s.url }) }); alert('Recrawl queued'); }catch{ alert('Failed to recrawl') } }}/>
+        onRecrawl={async(id)=>{ const s = sites.find(x=>x.id===id); if(!s) return; try{ setCrawlBusy(true); const lic = loadIntegrations(id).wpToken||''; const res = await fetch('/api/crawl/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId:id, url:s.url, key: lic, maxPages: 200, maxDepth: 3 }) }); const out = await res.json(); if(out?.ok){ alert(`Crawled ${out.count} pages`) } else { alert(out?.error||'Recrawl failed') } }catch(e:any){ alert(`Recrawl failed: ${e?.message||e}`) } finally { setCrawlBusy(false) } }}/>
+      <Modal open={crawlBusy} onClose={()=>{}}>
+        <h3>Crawling website...</h3>
+        <div className="muted">This may take a minute for larger sites.</div>
+        <div style={{display:'grid', placeItems:'center', padding:20}}><span className="spinner"/></div>
+      </Modal>
       <SelectModal open={showGscModal} onClose={()=>setShowGscModal(false)} title="Select GSC Site"
         items={gscList} getKey={(x:any)=>x.siteUrl} getLabel={(x:any)=>`${x.siteUrl} (${x.permissionLevel})`} onSelect={selectGsc}/>
       <SelectModal open={showGa4Modal} onClose={()=>setShowGa4Modal(false)} title="Select GA4 Property"
