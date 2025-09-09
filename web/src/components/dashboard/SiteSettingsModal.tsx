@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 
 export type SiteRecord = { id: string; name: string; url: string; industry?: string; description?: string; language?: string; country?: string; createdAt?: number }
 
-export default function SiteSettingsModal({ open, onClose, site, onSave, onDelete, onRecrawl, onOpenIntegrations }:{ open:boolean, onClose:()=>void, site: SiteRecord|undefined, onSave:(s: SiteRecord)=>void, onDelete:(id:string)=>void, onRecrawl:(id:string)=>void, onOpenIntegrations?:()=>void }){
+export default function SiteSettingsModal({ open, onClose, site, onSave, onDelete, onRecrawl, onOpenIntegrations, credits }:{ open:boolean, onClose:()=>void, site: SiteRecord|undefined, onSave:(s: SiteRecord)=>void, onDelete:(id:string)=>void, onRecrawl:(id:string)=>void, onOpenIntegrations?:()=>void, credits?: string }){
   const initial = useMemo(()=> site ? { ...site } : undefined, [site])
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
@@ -140,7 +140,10 @@ export default function SiteSettingsModal({ open, onClose, site, onSave, onDelet
             <button className="btn secondary" onClick={reset}>Reset</button>
           </div>
           <div style={{height:10}}/>
-          <button className="btn" style={{width:'100%', background:'#6d28d9'}} onClick={()=>onRecrawl(site.id)}>Recrawl</button>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+            <button className="btn" style={{background:'#6d28d9'}} onClick={()=>onRecrawl(site.id)}>Recrawl</button>
+            {credits && (<span className="badge">Credits: {credits}</span>)}
+          </div>
         </div>
 
         {/* Right form */}

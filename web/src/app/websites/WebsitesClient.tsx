@@ -316,7 +316,7 @@ export default function WebsitesClient(){
       </Modal>
 
       <AddWebsiteModal open={openAdd} onClose={()=>setOpenAdd(false)} onCreate={addWebsite}/>
-      <SiteSettingsModal open={openSettings} onClose={()=>setOpenSettings(false)} site={active}
+      <SiteSettingsModal open={openSettings} onClose={()=>setOpenSettings(false)} site={active} credits={credits}
         onSave={(updated)=>{ const idx = sites.findIndex(s=>s.id===updated.id); if(idx>=0){ const next=[...sites]; next[idx]=updated; setSites(next); saveSites(next); } setOpenSettings(false) }}
         onDelete={(id)=>{ const next = sites.filter(s=>s.id!==id); setSites(next); saveSites(next); if(activeId===id){ setActiveId(next[0]?.id) } setOpenSettings(false) }}
         onRecrawl={async(id)=>{ const s = sites.find(x=>x.id===id); if(!s) return; try{ setCrawlBusy(true); const lic = loadIntegrations(id).wpToken||''; const res = await fetch('/api/crawl/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId:id, url:s.url, key: lic, maxPages: 200, maxDepth: 3 }) }); const out = await res.json(); if(out?.ok){ alert(`Crawled ${out.count} pages`) } else { alert(out?.error||'Recrawl failed') } }catch(e:any){ alert(`Recrawl failed: ${e?.message||e}`) } finally { setCrawlBusy(false) } }}

@@ -15,12 +15,17 @@ export default async function LicensesPage(){
       <h2>Licenses</h2>
       <div className="card">
         <table className="table" style={{width:'100%'}}>
-          <thead><tr><th>ID</th><th>Plan</th><th>Sites</th><th>Crawl Credits</th><th>Expires</th><th>Actions</th></tr></thead>
+          <thead><tr><th>ID</th><th>Plan</th><th>Status</th><th>Sites</th><th>Crawl Credits</th><th>Expires</th><th>Actions</th></tr></thead>
           <tbody>
-            {(data.licenses||[]).map((l:any)=> (
+            {(data.licenses||[]).map((l:any)=> {
+              const expired = !!(l.expires_at && new Date(l.expires_at) < new Date())
+              const status = expired? 'Expired' : (l.status==='active'? 'Active':'Disabled')
+              const badgeStyle = status==='Active'? { background:'#0b1f16', border:'1px solid #1e3d2f', color:'#34d399' } : (status==='Expired'? { background:'#2a1212', border:'1px solid #432020', color:'#fca5a5' } : { background:'#2a1212', border:'1px solid #432020', color:'#f87171' })
+              return (
               <tr key={l.id}>
                 <td>{l.id.slice(0,8)}...</td>
                 <td>{l.plan||'-'}</td>
+                <td><span style={{fontSize:12, padding:'2px 6px', borderRadius:999, ...badgeStyle }}>{status}</span></td>
                 <td>{(actsByLic[l.id]||[]).length} / {l.max_sites}</td>
                 <td>{l.crawl_credits ?? 'Unlimited'}</td>
                 <td>{l.expires_at || '-'}</td>
@@ -31,8 +36,8 @@ export default async function LicensesPage(){
                     <button className="btn" style={{height:36}}>Save</button>
                   </form>
                 </td>
-              </tr>
-            ))}
+              </tr>)
+            })}
           </tbody>
         </table>
       </div>
@@ -50,4 +55,3 @@ export default async function LicensesPage(){
     </div>
   )
 }
-

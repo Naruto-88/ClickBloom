@@ -24,6 +24,8 @@ export function Sidebar(){
         {items.map(it => (
           <Link key={it.href} href={it.href} className={pathname?.startsWith(it.href) ? "active" : ""}>{it.label}</Link>
         ))}
+        <div style={{marginTop:16, opacity:.7, fontSize:12, padding:'6px 12px'}}>Admin</div>
+        <Link href="/admin/licenses" className={pathname?.startsWith('/admin/licenses') ? "active" : ""}>Licenses</Link>
       </nav>
     </aside>
   )
