@@ -17,6 +17,7 @@ function saveSaved(id: string, rows: Row[]){ localStorage.setItem('optimize:'+id
 export default function OptimizeClient(){
   const { range, setRange } = useDateRange()
   const [rows, setRows] = useState<Row[]>([])
+  const [siteId, setSiteId] = useState<string|undefined>(()=> activeSiteId())
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState<'ALL'|'OPTIMIZED'|'NOT_OPTIMIZED'|'NOT_ANALYZED'>('ALL')
   const [filters, setFilters] = useState<{[k:string]: 'ALL'|FieldStatus}>({ titleTag:'ALL', metaDescription:'ALL', imageAlt:'ALL', schema:'ALL', headings:'ALL', content:'ALL' })
@@ -27,7 +28,6 @@ export default function OptimizeClient(){
   const [openRange, setOpenRange] = useState(false)
   const [crawlMerged, setCrawlMerged] = useState<Row[]>([])
 
-  const siteId = activeSiteId()
   const siteUrl = gscSiteUrl(siteId)
   const ga4Property = (typeof window!=='undefined' && siteId ? (JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}').ga4Property as string|undefined) : undefined)
 
@@ -166,7 +166,7 @@ export default function OptimizeClient(){
   return (
     <>
       <div className="page-topbar">
-        <WebsitePicker/>
+        <WebsitePicker onChange={(site)=> setSiteId(site?.id)} />
       </div>
       <div className="page-header">
         <h2 style={{margin:0}}>Optimize</h2>

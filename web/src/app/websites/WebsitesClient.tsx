@@ -34,6 +34,8 @@ export default function WebsitesClient(){
   const [localDev, setLocalDev] = useState(false)
   const [crawlBusy, setCrawlBusy] = useState(false)
   const [credits, setCredits] = useState<string>('')
+  const [autoGoogle, setAutoGoogle] = useState<boolean>(()=> (localStorage.getItem('autoConnectGoogle')||'true')==='true')
+  const [autoBusy, setAutoBusy] = useState(false)
 
   useEffect(()=>{
     const s = loadSites(); setSites(s); const id = localStorage.getItem('activeWebsiteId') || s[0]?.id; setActiveId(id || undefined)
@@ -72,7 +74,109 @@ export default function WebsitesClient(){
     })()
   }, [sites])
 
-  const addWebsite = (w: Website) => { const next = [...sites, w]; setSites(next); saveSites(next); setActiveId(w.id); setOpenAdd(false) }
+  const addWebsite = (w: Website) => { const next = [...sites, w]; setSites(next); saveSites(next); setActiveId(w.id); setOpenAdd(false); if(autoGoogle){ setTimeout(()=> autoConnectGoogle(w.id).catch(()=>{}), 0) } }
+  useEffect(()=>{ if(autoGoogle && activeId){ const integ = loadIntegrations(activeId); if(!(integ.gscSite || integ.ga4Property)) autoConnectGoogle(activeId).catch(()=>{}) } }, [activeId, autoGoogle])
+
+  async function autoConnectGoogle(id: string){
+    const site = (sites.find(s=>s.id===id) || loadSites().find(s=>s.id===id)) as Website|undefined
+    if(!site) return
+    const integNow = loadIntegrations(id)
+    const normHost = (u:string)=>{ try{ const h=new URL(u).hostname.toLowerCase().replace(/^www\./,''); return h }catch{ return '' } }
+    const host = normHost(site.url)
+    // GSC
+    try{
+      if(!integNow.gscSite){
+        const r = await fetch('/api/google/gsc/sites'); if(r.status===401 || r.status===403){ await signIn('google', { callbackUrl:'/websites' as any, prompt:'consent' as any }); return }
+        if(r.ok){
+          const j = await r.json(); const items = (j.siteEntry||[]) as any[]
+          // build candidate url-prefix forms (with/without www, http/https, with trailing slash)
+          const hostNoWww = host.replace(/^www\./,'')
+          const hostWww = hostNoWww.startsWith('www.')? hostNoWww : `www.${hostNoWww}`
+          const forms = new Set<string>([
+            `https://${hostNoWww}/`,`http://${hostNoWww}/`,`https://${hostWww}/`,`http://${hostWww}/`
+          ])
+          const norm = (s:string)=>{
+            const ss = (s||'').toLowerCase()
+            if(ss.startsWith('sc-domain:')) return ss
+            // ensure trailing slash for url-prefix
+            return ss.endsWith('/')? ss : (ss+'/')
+          }
+          let pick = items.find((x:any)=> forms.has(norm(x.siteUrl||'')))
+          // try sc-domain apex match as fallback
+          if(!pick){
+            const apex = hostNoWww.split('.').slice(-2).join('.')
+            pick = items.find((x:any)=> norm(x.siteUrl||'')===`sc-domain:${apex}` || norm(x.siteUrl||'')===`sc-domain:${hostNoWww}`)
+          }
+          // final fallback: contains host fragment
+          if(!pick){ pick = items.find((x:any)=> (String(x.siteUrl||'').toLowerCase()).includes(hostNoWww)) }
+          if(pick){ saveIntegrations(id, { ...integNow, gscSite: pick.siteUrl, gscLabel: `${pick.siteUrl} (${pick.permissionLevel||''})` }); setIntegVer(v=>v+1) }
+        }
+      }
+    }catch{}
+    // GA4
+    try{
+      const integ = loadIntegrations(id)
+      if(!integ.ga4Property){
+        const r = await fetch('/api/google/ga4/properties'); if(r.status===401 || r.status===403){ await signIn('google', { callbackUrl:'/websites' as any, prompt:'consent' as any }); return }
+        if(r.ok){
+          const j = await r.json(); const props = (j.accountSummaries||[]).flatMap((a:any)=> a.propertySummaries||[])
+          let best: any = null
+          // 1) Try exact match via web stream defaultUri host
+          for(const p of props){
+            const name = p.property || p.name
+            if(!name) continue
+            try{
+              const s = await fetch(`/api/google/ga4/streams?property=${encodeURIComponent(name)}`)
+              if(s.ok){
+                const sj = await s.json()
+                const streams: any[] = sj.dataStreams||[]
+                const webStreams = streams.filter((ds:any)=> (ds.webStreamData?.defaultUri))
+                for(const ws of webStreams){
+                  const h = normHost(ws.webStreamData.defaultUri||'')
+                  if(h===host){ best = { name, label: p.displayName||name }; break }
+                }
+                if(best) break
+              }
+            }catch{}
+          }
+          // 2) Fallback: match displayName to host or site name
+          if(!best){
+            const hostPlain = host.replace(/\./g,'')
+            const sitePlain = (site.name||'').toLowerCase().replace(/[^a-z0-9]+/g,'')
+            const matches = props.filter((p:any)=>{
+              const dn = String(p.displayName||'').toLowerCase().replace(/[^a-z0-9]+/g,'')
+              return dn.includes(hostPlain) || (sitePlain && dn.includes(sitePlain))
+            })
+            if(matches.length===1){ const p = matches[0]; best = { name: p.property || p.name, label: p.displayName || (p.property||p.name) } }
+            else if(matches.length>1){
+              // prefer one with exact host token in displayName
+              const exact = matches.find((p:any)=> (p.displayName||'').toLowerCase().includes(host))
+              if(exact){ best = { name: exact.property||exact.name, label: exact.displayName|| (exact.property||exact.name) } }
+            }
+          }
+          // 3) Fallback: probe each property via GA4 Data API for host presence
+          if(!best && props.length){
+            try{
+              const today = new Date(); const y=new Date(today); y.setDate(today.getDate()-1); const start=new Date(y); start.setDate(y.getDate()-27)
+              const fmt=(d:Date)=> d.toISOString().slice(0,10)
+              for(const p of props){
+                const name = p.property || p.name
+                if(!name) continue
+                const r = await fetch('/api/google/ga4/report', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: name, start: fmt(start), end: fmt(y) }) })
+                if(!r.ok) continue
+                const j2 = await r.json(); const rows:any[] = j2.rows||[]
+                const found = rows.some((row:any)=> String(row.dimensionValues?.[0]?.value||'').toLowerCase().includes(host))
+                if(found){ best = { name, label: p.displayName||name }; break }
+              }
+            }catch{}
+          }
+          // 4) Fallback: only one property available
+          if(!best && props.length===1){ const p = props[0]; best = { name: p.property||p.name, label: p.displayName|| (p.property||p.name) } }
+          if(best){ saveIntegrations(id, { ...loadIntegrations(id), ga4Property: best.name, ga4Label: best.label }); setIntegVer(v=>v+1) }
+        }
+      }
+    }catch{}
+  }
 
   const connectGSC = async () => {
     try{
@@ -190,68 +294,7 @@ export default function WebsitesClient(){
           )}
         </div>
       </div>
-
-      {/* Integrations card (Connected Accounts) */}
-      <div className="card" style={{marginTop:16}}>
-        <div className="panel-title"><strong>Connected Accounts</strong></div>
-        <div style={{display:'grid', gap:12}}>
-          {/* Google Search Console */}
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
-            <div style={{display:'flex', alignItems:'center', gap:12}}>
-              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>G</div>
-              <div>
-                <div style={{fontWeight:700}}>Google Search Console</div>
-                <div className="muted">Connect to your Google Search Console account.</div>
-              </div>
-            </div>
-            <div style={{display:'flex', alignItems:'center', gap:10}}>
-              {integ.gscSite && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
-              {integ.gscSite ? (
-                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, gscSite: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
-              ) : (
-                <button className="btn" onClick={connectGSC}>Connect</button>
-              )}
-            </div>
-          </div>
-          {/* Google Analytics */}
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
-            <div style={{display:'flex', alignItems:'center', gap:12}}>
-              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>A</div>
-              <div>
-                <div style={{fontWeight:700}}>Google Analytics (GA4)</div>
-                <div className="muted">Connect to your Google Analytics property.</div>
-              </div>
-            </div>
-            <div style={{display:'flex', alignItems:'center', gap:10}}>
-              {integ.ga4Property && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
-              {integ.ga4Property ? (
-                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, ga4Property: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
-              ) : (
-                <button className="btn" onClick={connectGA4}>Connect</button>
-              )}
-            </div>
-          </div>
-          {/* WordPress */}
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
-            <div style={{display:'flex', alignItems:'center', gap:12}}>
-              <div style={{width:36, height:36, borderRadius:10, background:'#0f172a', display:'grid', placeItems:'center'}}>W</div>
-              <div>
-                <div style={{fontWeight:700}}>WordPress</div>
-                <div className="muted">Connect your WordPress site to publish changes.</div>
-              </div>
-            </div>
-            <div style={{display:'flex', alignItems:'center', gap:10}}>
-              {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
-              {(integ.wpEndpoint && integ.wpToken) ? (
-                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, wpEndpoint: undefined, wpToken: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
-              ) : (
-                <button className="btn" onClick={()=> setOpenInteg(true)}>Connect</button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
+ 
       {/* Integration modal */}
       <Modal open={openInteg} onClose={()=>setOpenInteg(false)}>
         <h3>Integrations</h3>
@@ -261,13 +304,15 @@ export default function WebsitesClient(){
             <div>
               <div style={{fontWeight:700}}>Google Search Console</div>
               <div className="muted">Connect to your Search Console account.</div>
+              {integ.gscSite && (
+                <div className="muted" style={{marginTop:4, fontSize:12}}>Connected: {integ.gscLabel || integ.gscSite}</div>
+              )}
             </div>
             <div style={{display:'flex', alignItems:'center', gap:10}}>
               {integ.gscSite && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
-              {integ.gscSite ? (
-                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, gscSite: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
-              ) : (
-                <button className="btn" onClick={connectGSC}>Connect</button>
+              <button className="btn" onClick={connectGSC}>{integ.gscSite? 'Change' : 'Connect'}</button>
+              {integ.gscSite && (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, gscSite: undefined, gscLabel: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
               )}
             </div>
           </div>
@@ -276,13 +321,15 @@ export default function WebsitesClient(){
             <div>
               <div style={{fontWeight:700}}>Google Analytics (GA4)</div>
               <div className="muted">Connect to your GA4 property.</div>
+              {integ.ga4Property && (
+                <div className="muted" style={{marginTop:4, fontSize:12}}>Connected: {integ.ga4Label || integ.ga4Property}</div>
+              )}
             </div>
             <div style={{display:'flex', alignItems:'center', gap:10}}>
               {integ.ga4Property && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Connected</span>}
-              {integ.ga4Property ? (
-                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, ga4Property: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
-              ) : (
-                <button className="btn" onClick={connectGA4}>Connect</button>
+              <button className="btn" onClick={connectGA4}>{integ.ga4Property? 'Change' : 'Connect'}</button>
+              {integ.ga4Property && (
+                <button className="btn secondary" onClick={()=>{ if(activeId){ saveIntegrations(activeId, { ...integ, ga4Property: undefined, ga4Label: undefined }); setIntegVer(v=>v+1) } }}>Disconnect</button>
               )}
             </div>
           </div>
@@ -295,6 +342,16 @@ export default function WebsitesClient(){
             <div style={{display:'flex', alignItems:'center', gap:10}}>
               {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Verified</span>}
             </div>
+          </div>
+          <div className="muted" style={{display:'flex', alignItems:'center', gap:8}}>
+            <input type="checkbox" checked={autoGoogle} onChange={(e)=>{ setAutoGoogle(e.target.checked); localStorage.setItem('autoConnectGoogle', String(e.target.checked)) }} />
+            Auto-connect Google (GSC & GA4) for new/active sites
+          </div>
+          <div className="actions" style={{justifyContent:'flex-start'}}>
+            <button className="btn" disabled={autoBusy || !activeId} onClick={async()=>{
+              if(!activeId) return; setAutoBusy(true)
+              try{ await autoConnectGoogle(activeId); const integ = loadIntegrations(activeId); alert(`Auto-connect finished.\nGSC: ${integ.gscSite? 'Connected':'Not found'}\nGA4: ${integ.ga4Property? 'Connected':'Not found'}`) } finally { setAutoBusy(false) }
+            }}>{autoBusy? 'Running…' : 'Run Google Auto-Connect Now'}</button>
           </div>
         </div>
         <div style={{height:10}}/>

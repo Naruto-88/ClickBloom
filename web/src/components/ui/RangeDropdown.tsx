@@ -18,7 +18,10 @@ export default function RangeDropdown({ value, onChange }: { value: DateRange, o
     return [
       { key:'7', label:'Last 7 Days', range: mk(7) },
       { key:'28', label:'Last 28 Days', range: mk(28) },
-      { key:'90', label:'Last 90 Days', range: mk(90) },
+      { key:'30', label:'Last 30 Days', range: mk(30) },
+      { key:'90', label:'Last 3 Months', range: mk(90) },
+      { key:'180', label:'Last 6 Months', range: mk(180) },
+      { key:'365', label:'Last 12 Months', range: mk(365) },
       { key:'this', label:'This Month', range: { from: new Date(y.getFullYear(), y.getMonth(), 1), to: y } },
       { key:'last', label:'Last Month', range: { from: new Date(y.getFullYear(), y.getMonth()-1, 1), to: new Date(y.getFullYear(), y.getMonth(), 0) } },
     ]

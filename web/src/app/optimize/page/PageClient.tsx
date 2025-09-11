@@ -18,6 +18,7 @@ export default function PageClient(){
   const params = useSearchParams(); const router = useRouter()
   const u = params?.get('u') || ''
   const url = useMemo(()=> u? fromB64(u) : '', [u])
+  const [siteId, setSiteId] = useState<string|undefined>(()=> activeSite())
   const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-27); return { from:s,to:y } })
   const [points, setPoints] = useState<Point[]>([])
   const [scan, setScan] = useState<any>(null)
@@ -52,7 +53,7 @@ export default function PageClient(){
   const [crawlList, setCrawlList] = useState<any[]>([])
   const [crawlQuery, setCrawlQuery] = useState('')
 
-  const siteId = activeSite(); const siteUrl = gscSiteUrl(siteId)
+  const siteUrl = gscSiteUrl(siteId)
   const fmt = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
 
@@ -377,7 +378,7 @@ export default function PageClient(){
           </div>
         </div>
       )}
-      <div className="page-topbar"><WebsitePicker/></div>
+      <div className="page-topbar"><WebsitePicker onChange={(site)=> setSiteId(site?.id)} /></div>
       <div className="page-header">
         <h2 style={{margin:0}}>Page SEO Optimization</h2>
         <div className="breadcrumb">Home - <strong>Page SEO Optimization</strong></div>

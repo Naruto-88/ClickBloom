@@ -1,5 +1,6 @@
 import AuthGuard from "@/components/AuthGuard"
 import { Sidebar } from "@/components/Sidebar"
+import PerformanceClient from "./PerformanceClient"
 
 export default async function Performance(){
   return (
@@ -7,8 +8,10 @@ export default async function Performance(){
       <div className="layout">
         <Sidebar/>
         <main className="content">
-          <h2>Performance</h2>
-          <div className="card">Coming soon: GA4 + GSC connectors for performance trends.</div>
+          <div className="page-header">
+            <h2 style={{margin:0}}>Performance</h2>
+          </div>
+          <PerformanceClient/>
         </main>
       </div>
     </AuthGuard>
