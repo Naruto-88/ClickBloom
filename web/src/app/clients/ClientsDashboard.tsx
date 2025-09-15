@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import { useDateRange } from "@/components/date-range"
 
 type Website = { id: string, name: string, url: string }
 type Integration = { gscSite?: string, ga4Property?: string }
@@ -55,12 +56,13 @@ type Row = {
 
 export default function ClientsDashboard(){
   const router = useRouter()
-  const [range, setRange] = useState<DateRange>(last7Days)
+  const { range, setRange } = useDateRange()
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [highlightId, setHighlightId] = useState<string|undefined>()
   const [showPrev, setShowPrev] = useState(true)
-  const [sortBy, setSortBy] = useState<'worst'|'clicks'|'sessions'|'name'>('worst')
+  const [sortBy, setSortBy] = useState<'worst'|'clicks'|'impressions'|'position'|'sessions'|'name'>('worst')
+  const [sortDir, setSortDir] = useState<'asc'|'desc'>('desc')
   const [statusFilter, setStatusFilter] = useState<'all'|'attention'|'red'|'orange'|'green'>('all')
   const presets = useMemo(()=>([
     { key:'7d', label:'7 Days', range: lastNDays(7) },
@@ -71,26 +73,45 @@ export default function ClientsDashboard(){
     { key:'1y', label:'Last Year', range: lastNDays(365) },
   ]), [])
   const [activeKey, setActiveKey] = useState<string>('7d')
+  const matchPresetKey = (r: DateRange): string => {
+    const dayDiff = Math.max(1, Math.round((r.to.getTime()-r.from.getTime())/86400000)+1)
+    const lm = lastMonth()
+    const isSameDay = (a:Date,b:Date)=> a.toDateString()===b.toDateString()
+    if(isSameDay(r.from, lm.from) && isSameDay(r.to, lm.to)) return 'lastm'
+    if(Math.abs(dayDiff-7)<=1) return '7d'
+    if(Math.abs(dayDiff-30)<=1) return '30d'
+    if(Math.abs(dayDiff-90)<=2) return '3m'
+    if(Math.abs(dayDiff-180)<=3) return '6m'
+    if(Math.abs(dayDiff-365)<=5) return '1y'
+    return 'custom'
+  }
 
-  // Persist settings
+  // Persist + restore settings
   useEffect(()=>{
     try{
-      const k = localStorage.getItem('clients:presetKey') || '7d'
+      const k = localStorage.getItem('clients:presetKey') || matchPresetKey(range)
       const s = (localStorage.getItem('clients:sort') as any) || 'worst'
+      const sd = (localStorage.getItem('clients:sortDir') as any) || 'desc'
       const f = (localStorage.getItem('clients:filter') as any) || 'all'
       const compact = (localStorage.getItem('clients:compact')||'false')==='true'
-      const p = presets.find(p=>p.key===k) || presets[0]
-      setActiveKey(p.key); setRange(p.range)
+      const p = presets.find(p=>p.key===k)
+      if(p){ setActiveKey(p.key); setRange(p.range) } else { setActiveKey(matchPresetKey(range)) }
       if(s) setSortBy(s)
+      if(sd) setSortDir(sd)
       if(f) setStatusFilter(f)
       setShowPrev(!compact)
+      const h = localStorage.getItem('clients:highlightId') || undefined
+      if(h) setHighlightId(h)
     }catch{}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(()=>{ try{ localStorage.setItem('clients:presetKey', activeKey) }catch{} }, [activeKey])
   useEffect(()=>{ try{ localStorage.setItem('clients:sort', sortBy) }catch{} }, [sortBy])
+  useEffect(()=>{ try{ localStorage.setItem('clients:sortDir', sortDir) }catch{} }, [sortDir])
   useEffect(()=>{ try{ localStorage.setItem('clients:filter', statusFilter) }catch{} }, [statusFilter])
   useEffect(()=>{ try{ localStorage.setItem('clients:compact', String(!showPrev)) }catch{} }, [showPrev])
+  useEffect(()=>{ try{ if(highlightId) localStorage.setItem('clients:highlightId', highlightId) }catch{} }, [highlightId])
+  useEffect(()=>{ setActiveKey(matchPresetKey(range)) }, [range.from, range.to])
 
   const sites = useMemo(()=> loadSites(), [])
 
@@ -208,13 +229,15 @@ export default function ClientsDashboard(){
       return severity*1000 + Math.max(0,-dClicks) + Math.max(0,-dImpr) + Math.max(0,-dSess) + Math.max(0,dPos)
     }
     if(sortBy==='worst') list = list.sort((a,b)=> score(b)-score(a))
-    if(sortBy==='clicks') list = list.sort((a,b)=> b.gscClicks - a.gscClicks)
-    if(sortBy==='sessions') list = list.sort((a,b)=> b.ga4Sessions - a.ga4Sessions)
+    if(sortBy==='clicks') list = list.sort((a,b)=> sortDir==='desc' ? (b.gscClicks - a.gscClicks) : (a.gscClicks - b.gscClicks))
+    if(sortBy==='impressions') list = list.sort((a,b)=> sortDir==='desc' ? (b.gscImpr - a.gscImpr) : (a.gscImpr - b.gscImpr))
+    if(sortBy==='position') list = list.sort((a,b)=> sortDir==='asc' ? (a.gscPos - b.gscPos) : (b.gscPos - a.gscPos))
+    if(sortBy==='sessions') list = list.sort((a,b)=> sortDir==='desc' ? (b.ga4Sessions - a.ga4Sessions) : (a.ga4Sessions - b.ga4Sessions))
     if(sortBy==='name') list = list.sort((a,b)=> a.name.localeCompare(b.name))
     // Keep highlighted on top
     if(highlightId){ list = list.sort((a,b)=> (a.id===highlightId? -1 : b.id===highlightId? 1 : 0)) }
     return list
-  }, [rows, highlightId, sortBy, statusFilter])
+  }, [rows, highlightId, sortBy, sortDir, statusFilter])
 
   return (
     <>
@@ -242,9 +265,11 @@ export default function ClientsDashboard(){
         <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
           <div className="picker" style={{gap:8}}>
             <span className="muted" style={{fontSize:12}}>Sort</span>
-            <select value={sortBy} onChange={(e)=> setSortBy(e.target.value as any)} className="sel">
+            <select value={sortBy} onChange={(e)=> { const v = e.target.value as any; setSortBy(v); if(v==='position'){ setSortDir('asc') } else { setSortDir('desc') } }} className="sel">
               <option value="worst">Worst first</option>
               <option value="clicks">Clicks</option>
+              <option value="impressions">Impressions</option>
+              <option value="position">Avg Position</option>
               <option value="sessions">Sessions</option>
               <option value="name">Name</option>
             </select>
@@ -297,10 +322,18 @@ export default function ClientsDashboard(){
         </div>
         <div className="clients-grid cols" style={{padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
           <div style={{opacity:.8}}>Client</div>
-          <div style={{opacity:.8}}>GSC Clicks</div>
-          <div style={{opacity:.8}}>GSC Impressions</div>
-          <div style={{opacity:.8}}>GSC Avg Pos</div>
-          <div style={{opacity:.8}}>GA4 Sessions</div>
+          <button className="th" onClick={()=>{ setSortBy('clicks'); setSortDir(sortBy==='clicks' && sortDir==='desc' ? 'asc':'desc') }}>
+            GSC Clicks <span className="caret">{sortBy==='clicks' ? (sortDir==='desc'?'▼':'▲') : ''}</span>
+          </button>
+          <button className="th" onClick={()=>{ setSortBy('impressions'); setSortDir(sortBy==='impressions' && sortDir==='desc' ? 'asc':'desc') }}>
+            GSC Impressions <span className="caret">{sortBy==='impressions' ? (sortDir==='desc'?'▼':'▲') : ''}</span>
+          </button>
+          <button className="th" onClick={()=>{ setSortBy('position'); setSortDir(sortBy==='position' && sortDir==='asc' ? 'desc':'asc') }}>
+            GSC Avg Pos <span className="caret">{sortBy==='position' ? (sortDir==='asc'?'▲':'▼') : ''}</span>
+          </button>
+          <button className="th" onClick={()=>{ setSortBy('sessions'); setSortDir(sortBy==='sessions' && sortDir==='desc' ? 'asc':'desc') }}>
+            GA4 Sessions <span className="caret">{sortBy==='sessions' ? (sortDir==='desc'?'▼':'▲') : ''}</span>
+          </button>
           <div style={{opacity:.8, textAlign:'center'}}>Actions</div>
         </div>
         {sorted.map(r=>{
@@ -387,6 +420,8 @@ export default function ClientsDashboard(){
         /* Styled selects for dark theme */
         .sel{ height:32px; border-radius:8px; border:1px solid #2b2b47; background:#121228; color:#e6e6f0; padding:0 8px; }
         .sel option{ background:#0f0f20; color:#e6e6f0; }
+        .th{ background:transparent; color:#cbd0ea; border:0; text-align:left; padding:0; cursor:pointer; font:inherit; display:inline-flex; align-items:center; gap:6px; }
+        .th .caret{ opacity:.8; }
       `}</style>
     </>
   )
