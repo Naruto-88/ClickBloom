@@ -1,6 +1,5 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
-import RangeDropdown from "@/components/ui/RangeDropdown"
 
 type Website = { id: string, name: string, url: string }
 type Integration = { gscSite?: string, ga4Property?: string }
@@ -14,6 +13,19 @@ function last7Days(): DateRange{
   const y = new Date(); y.setDate(y.getDate()-1)
   const s = new Date(y); s.setDate(y.getDate()-6)
   return { from: s, to: y }
+}
+
+function lastNDays(n:number): DateRange{
+  const y = new Date(); y.setDate(y.getDate()-1)
+  const s = new Date(y); s.setDate(y.getDate()-(n-1))
+  return { from: s, to: y }
+}
+
+function lastMonth(): DateRange{
+  const y = new Date(); y.setDate(y.getDate()-1)
+  const from = new Date(y.getFullYear(), y.getMonth()-1, 1)
+  const to = new Date(y.getFullYear(), y.getMonth(), 0)
+  return { from, to }
 }
 
 function fmtDateISO(d: Date){ return d.toISOString().slice(0,10) }
@@ -72,12 +84,13 @@ export default function ClientsDashboard(){
     }catch{ return 0 }
   }
 
-  function decideStatus(curr: { clicks:number, impressions:number, pos:number }, prev: { clicks:number, impressions:number, pos:number }): 'good'|'warn'|'bad'{
+  function decideStatus(curr: { clicks:number, impressions:number, pos:number, sessions:number }, prev: { clicks:number, impressions:number, pos:number, sessions:number }): 'good'|'warn'|'bad'{
     const dClicks = pct(curr.clicks, prev.clicks)
     const dImpr = pct(curr.impressions, prev.impressions)
     const dPos = (curr.pos - prev.pos) // positive = worse
-    if(dClicks < -20 || dImpr < -20 || dPos > 5) return 'bad'
-    if(dClicks < -5 || dImpr < -5 || dPos > 2) return 'warn'
+    const dSess = pct(curr.sessions, prev.sessions)
+    if(dClicks < -20 || dImpr < -20 || dSess < -20 || dPos > 5) return 'bad'
+    if(dClicks < -5 || dImpr < -5 || dSess < -5 || dPos > 2) return 'warn'
     return 'good'
   }
 
@@ -115,8 +128,8 @@ export default function ClientsDashboard(){
         }
 
         const status = decideStatus(
-          { clicks: gCurr.clicks, impressions: gCurr.impressions, pos: gCurr.position||0 },
-          { clicks: gPrev.clicks, impressions: gPrev.impressions, pos: gPrev.position||0 }
+          { clicks: gCurr.clicks, impressions: gCurr.impressions, pos: gCurr.position||0, sessions },
+          { clicks: gPrev.clicks, impressions: gPrev.impressions, pos: gPrev.position||0, sessions: sessionsPrev }
         )
 
         out.push({
@@ -154,8 +167,23 @@ export default function ClientsDashboard(){
 
   return (
     <>
-      <div className="toolbar" style={{marginBottom:12, justifyContent:'flex-end'}}>
-        <RangeDropdown value={range} onChange={setRange} />
+      <div className="toolbar" style={{marginBottom:12, justifyContent:'space-between'}}>
+        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+          <div className="seg" style={{display:'inline-flex', gap:6, padding:6, border:'1px solid #2b2b47', borderRadius:10, background:'#121228'}}>
+            {[
+              { key:'7d', label:'7 Days', range: lastNDays(7) },
+              { key:'30d', label:'30 Days', range: lastNDays(30) },
+              { key:'lastm', label:'Last Month', range: lastMonth() },
+              { key:'6m', label:'Last 6 Months', range: lastNDays(180) },
+              { key:'1y', label:'Last Year', range: lastNDays(365) },
+            ].map(p => (
+              <button key={p.key} className="btn secondary" style={{height:32, padding:'0 10px'}} onClick={()=> setRange(p.range)}>{p.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="muted" style={{fontSize:12}}>
+          {range.from.toLocaleDateString()} – {range.to.toLocaleDateString()} (vs previous period)
+        </div>
       </div>
 
       {/* Acronym chips with status */}
@@ -207,26 +235,30 @@ export default function ClientsDashboard(){
                   <div className="muted" style={{fontSize:12}}>{r.url}</div>
                 </div>
               </div>
-              <div style={{display:'flex', alignItems:'center'}}>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.gscClicks)}</strong>
                 {fmtDelta(r.gscClicks, r.gscClicksPrev)}
+                <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscClicksPrev)}</span>
               </div>
-              <div style={{display:'flex', alignItems:'center'}}>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.gscImpr)}</strong>
                 {fmtDelta(r.gscImpr, r.gscImprPrev)}
+                <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscImprPrev)}</span>
               </div>
-              <div style={{display:'flex', alignItems:'center'}}>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{r.gscPos.toFixed(1)}</strong>
                 {/* For position lower is better; invert */}
-                <span style={{marginLeft:6}}>
+                <span>
                   <span className={`growth-badge ${r.gscPos <= r.gscPosPrev ? 'up':'down'}`}>
                     {(r.gscPos - r.gscPosPrev).toFixed(1)}
                   </span>
                 </span>
+                <span className="muted" style={{fontSize:11}}>prev {r.gscPosPrev.toFixed(1)}</span>
               </div>
-              <div style={{display:'flex', alignItems:'center'}}>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.ga4Sessions)}</strong>
                 {fmtDelta(r.ga4Sessions, r.ga4SessionsPrev)}
+                <span className="muted" style={{fontSize:11}}>prev {fmt(r.ga4SessionsPrev)}</span>
               </div>
             </div>
           )
