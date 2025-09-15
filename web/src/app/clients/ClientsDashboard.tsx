@@ -272,7 +272,7 @@ export default function ClientsDashboard(){
 
       <div className="card" style={{padding:12}}>
         <div className="muted" style={{fontSize:12, marginBottom:8}}>
-          Showing {sites.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
+          Showing {sorted.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
         </div>
         <div style={{display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px 44px', gap:8, alignItems:'center', fontSize:13, padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
           <div style={{opacity:.8}}>Client</div>
