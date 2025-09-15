@@ -1,5 +1,4 @@
 "use client"
-import WebsitePicker from "@/components/dashboard/WebsitePicker"
 import AddWebsiteModal, { Website as WebsiteType } from "@/components/dashboard/AddWebsiteModal"
 import SiteSettingsModal from "@/components/dashboard/SiteSettingsModal"
 import Modal from "@/components/ui/Modal"
@@ -45,12 +44,7 @@ export default function WebsitesClient(){
 
   const active = useMemo(()=> sites.find(x=>x.id===activeId), [sites, activeId])
   const integ = useMemo(()=> loadIntegrations(activeId), [activeId, integVer])
-  const aiCfg = useMemo(()=>{ try{ return activeId? (JSON.parse(localStorage.getItem('ai:'+activeId)||'{}')) : {} }catch{ return {} } }, [activeId, integVer])
-  const [globalAi, setGlobalAi] = useState<{ hasKey:boolean, model?:string }>({ hasKey:false, model:'' })
-  const [aiBusy, setAiBusy] = useState<'save'|'test'|null>(null)
-  const [aiKeyInput, setAiKeyInput] = useState('')
-  const [aiModelInput, setAiModelInput] = useState('')
-  useEffect(()=>{ (async()=>{ try{ const r=await fetch('/api/settings/ai'); const j=await r.json().catch(()=>null); if(j?.ok){ setGlobalAi({ hasKey:!!j.hasKey, model:j.model||'' }); setAiModelInput(j.model||'') } }catch{} })() }, [])
+  // AI Provider UI moved to topbar; keep integrations only for Google/WordPress.
   useEffect(()=>{ setKeyInput(integ.wpToken||''); if(integ.wpToken){
     // Load remaining credits for display
     fetch('/api/license/validate', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ key: integ.wpToken, site_url: active?.url||'' }) })
@@ -453,27 +447,7 @@ export default function WebsitesClient(){
             {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Verified</span>}
           </div>
         </div>
-        {/* AI Provider */}
-        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
-          <div>
-            <div style={{fontWeight:700}}>AI Provider (OpenAI)</div>
-            <div className="muted">Use your own API key and model for AI features.</div>
-            <div className="muted" style={{marginTop:4, fontSize:12}}>
-              Global key: {globalAi.hasKey? 'Saved' : 'Not set'}{globalAi.model? ` • Model: ${globalAi.model}`:''}
-            </div>
-          </div>
-          <div style={{display:'grid', gap:8, minWidth:420}}>
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-              <input className="input" placeholder="Global OpenAI API Key (stored securely)" value={aiKeyInput} onChange={(e)=> setAiKeyInput(e.target.value)} />
-              <input className="input" placeholder="Global Model (e.g., gpt-4o-mini)" value={aiModelInput} onChange={(e)=> setAiModelInput(e.target.value)} />
-            </div>
-            <div className="actions" style={{justifyContent:'flex-start', gap:8, margin:0}}>
-              <button className="btn" disabled={aiBusy!==null} onClick={async()=>{ try{ setAiBusy('save'); const body:any={}; if(aiKeyInput) body.openaiKey=aiKeyInput; body.model=aiModelInput; const r=await fetch('/api/settings/ai',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }); const j=await r.json().catch(()=>null); if(j?.ok){ alert('Saved'); setGlobalAi({ hasKey: !!aiKeyInput || globalAi.hasKey, model: aiModelInput }); setAiKeyInput('') } else { alert(j?.error||'Save failed') } } finally { setAiBusy(null) } }}>Save</button>
-              <button className="btn secondary" disabled={aiBusy!==null} onClick={async()=>{ try{ setAiBusy('test'); const r=await fetch('/api/settings/ai/test',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ apiKey: aiKeyInput||undefined, model: aiModelInput||undefined }) }); const j=await r.json().catch(()=>null); if(j?.ok){ alert(`Key OK${j.model? ' • Model '+j.model:''}`) } else { alert(j?.error||'Test failed') } } finally { setAiBusy(null) } }}>Test Key</button>
-            </div>
-            <div className="muted" style={{fontSize:12}}>Tip: Leave the key field empty to keep the existing saved key; only model will update.</div>
-          </div>
-        </div>
+        {/* AI Provider moved to topbar Add Integration button */}
           <div className="muted" style={{display:'flex', alignItems:'center', gap:8}}>
             <input type="checkbox" checked={autoGoogle} onChange={(e)=>{ setAutoGoogle(e.target.checked); localStorage.setItem('autoConnectGoogle', String(e.target.checked)) }} />
             Auto-connect Google (GSC & GA4) for new/active sites

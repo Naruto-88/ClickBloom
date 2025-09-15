@@ -1,0 +1,4 @@
+
+      <div className="card" style={{padding:12, position:'relative'}}>
+        <div className="muted" style={{fontSize:12, marginBottom:8}}>
+          Showing {sorted.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
