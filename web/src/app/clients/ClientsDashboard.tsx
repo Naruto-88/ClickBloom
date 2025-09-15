@@ -72,6 +72,26 @@ export default function ClientsDashboard(){
   ]), [])
   const [activeKey, setActiveKey] = useState<string>('7d')
 
+  // Persist settings
+  useEffect(()=>{
+    try{
+      const k = localStorage.getItem('clients:presetKey') || '7d'
+      const s = (localStorage.getItem('clients:sort') as any) || 'worst'
+      const f = (localStorage.getItem('clients:filter') as any) || 'all'
+      const compact = (localStorage.getItem('clients:compact')||'false')==='true'
+      const p = presets.find(p=>p.key===k) || presets[0]
+      setActiveKey(p.key); setRange(p.range)
+      if(s) setSortBy(s)
+      if(f) setStatusFilter(f)
+      setShowPrev(!compact)
+    }catch{}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(()=>{ try{ localStorage.setItem('clients:presetKey', activeKey) }catch{} }, [activeKey])
+  useEffect(()=>{ try{ localStorage.setItem('clients:sort', sortBy) }catch{} }, [sortBy])
+  useEffect(()=>{ try{ localStorage.setItem('clients:filter', statusFilter) }catch{} }, [statusFilter])
+  useEffect(()=>{ try{ localStorage.setItem('clients:compact', String(!showPrev)) }catch{} }, [showPrev])
+
   const sites = useMemo(()=> loadSites(), [])
 
   async function fetchGscTotals(siteUrl: string, start: string, end: string){
@@ -222,7 +242,7 @@ export default function ClientsDashboard(){
         <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
           <div className="picker" style={{gap:8}}>
             <span className="muted" style={{fontSize:12}}>Sort</span>
-            <select value={sortBy} onChange={(e)=> setSortBy(e.target.value as any)} style={{background:'transparent', border:0, color:'inherit'}}>
+            <select value={sortBy} onChange={(e)=> setSortBy(e.target.value as any)} className="sel">
               <option value="worst">Worst first</option>
               <option value="clicks">Clicks</option>
               <option value="sessions">Sessions</option>
@@ -231,7 +251,7 @@ export default function ClientsDashboard(){
           </div>
           <div className="picker" style={{gap:8}}>
             <span className="muted" style={{fontSize:12}}>Filter</span>
-            <select value={statusFilter} onChange={(e)=> setStatusFilter(e.target.value as any)} style={{background:'transparent', border:0, color:'inherit'}}>
+            <select value={statusFilter} onChange={(e)=> setStatusFilter(e.target.value as any)} className="sel">
               <option value="all">All</option>
               <option value="attention">Attention (Red/Orange)</option>
               <option value="red">Red</option>
@@ -335,7 +355,7 @@ export default function ClientsDashboard(){
                   </svg>
                 </button>
                 <button
-                  onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; router.push('/dashboard') }}
+                  onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; window.open('/dashboard', '_blank', 'noopener,noreferrer') }}
                   title="Open client dashboard"
                   className="icon-btn"
                 >
@@ -364,6 +384,9 @@ export default function ClientsDashboard(){
         @media (max-width: 1200px){ .clients-grid.cols{ grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 1fr)) minmax(120px, 1fr) 68px } }
         @media (max-width: 1000px){ .clients-grid.cols{ grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(110px, 1fr)) minmax(110px, 1fr) 64px } }
         @media (max-width: 860px){ .clients-grid.cols{ grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(100px, 1fr)) minmax(100px, 1fr) 60px } }
+        /* Styled selects for dark theme */
+        .sel{ height:32px; border-radius:8px; border:1px solid #2b2b47; background:#121228; color:#e6e6f0; padding:0 8px; }
+        .sel option{ background:#0f0f20; color:#e6e6f0; }
       `}</style>
     </>
   )
