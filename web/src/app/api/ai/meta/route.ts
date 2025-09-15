@@ -23,7 +23,7 @@ export async function POST(req: NextRequest){
     const openai = new OpenAI({ apiKey })
     const ctx = await extract(url)
     const prompt = `Write an SEO meta description for the page below.
-Rules: 140-160 characters, compelling, natural language, include primary keyword if provided, no quotes.
+Rules (2025): 150–160 characters; compelling and specific; match the dominant search intent; include the primary keyword once near the beginning in natural language; highlight a clear benefit or differentiator; add a subtle CTA; avoid quotes, emojis, and keyword stuffing; no line breaks.
 Primary keyword(s): ${(Array.isArray(keywords)?keywords:[]).join(', ')||'N/A'}
 Title: ${ctx.title}
 Existing meta: ${ctx.meta||'-'}

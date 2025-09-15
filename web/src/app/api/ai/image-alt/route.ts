@@ -32,7 +32,7 @@ export async function POST(req: NextRequest){
       }
       try{
         const msgs: any[] = [
-          { role: 'system', content: 'You write concise, descriptive, accessible image alt text (<= 14 words), using natural language. Always include the primary keyword phrase exactly once if provided. Output plain text, no quotes or punctuation at the ends.' },
+          { role: 'system', content: 'You write concise, descriptive, accessible image alt text (8–14 words) using natural language. Include the primary keyword phrase exactly once if provided. Do not start with "image of" or "photo of". Do not use brand names unless essential. Avoid punctuation at the start/end, emojis, and keyword stuffing. Output plain text only.' },
           { role: 'user', content: [
             { type:'text', text:`Primary keyword(s): ${(Array.isArray(keywords)?keywords:[]).join(', ')||'N/A'}\nDescribe this image for the alt attribute.${variant? `\nReturn a different variation #${variant}.`:''}` },
             { type:'image_url', image_url:{ url: src } }

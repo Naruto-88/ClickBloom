@@ -4,10 +4,11 @@ export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest){
   try{
-    const { endpoint, token, pageUrl, title, description, canonical, schema, images, postId } = await req.json()
+    const { endpoint, token, pageUrl, title, seoTitle, description, canonical, schema, images, postId } = await req.json()
     if(!endpoint || !token || !pageUrl){ return NextResponse.json({ ok:false, error:'Missing endpoint/token/pageUrl' }, { status: 400 }) }
     const payload: any = { token, url: pageUrl }
     if(title) payload.title = title
+    if(seoTitle) payload.seoTitle = seoTitle
     if(description) payload.description = description
     if(canonical) payload.canonical = canonical
     if(schema){

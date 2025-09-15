@@ -23,12 +23,14 @@ export default function PageClient(){
   const [points, setPoints] = useState<Point[]>([])
   const [scan, setScan] = useState<any>(null)
   const [loading, setLoading] = useState(false)
-  const [applied, setApplied] = useState<{ title?: string, description?: string, canonical?: string }|null>(null)
+  const [applied, setApplied] = useState<{ title?: string, seoTitle?: string, description?: string, canonical?: string }|null>(null)
   const [activeTab, setActiveTab] = useState<'title'|'description'|'image'|'schema'>('title')
   const [queries, setQueries] = useState<Array<{ query: string, clicks: number, impressions: number, ctr: number, position: number }>>([])
   const [ideas, setIdeas] = useState<string[]>([])
+  const [seoIdeas, setSeoIdeas] = useState<string[]>([])
   const [showIdeas, setShowIdeas] = useState(false)
   const [mainKw, setMainKw] = useState("")
+  const [titleApplyMode, setTitleApplyMode] = useState<'seo'|'both'|'h1'>('both')
   const [proposedMeta, setProposedMeta] = useState<string>("")
   const [proposedSchema, setProposedSchema] = useState<string>("")
   const [metaEdited, setMetaEdited] = useState(false)
@@ -36,6 +38,21 @@ export default function PageClient(){
   const [keepEdits, setKeepEdits] = useState(true)
   const [metaBusy, setMetaBusy] = useState(false)
   const [schemaBusy, setSchemaBusy] = useState(false)
+  const [titlesBusy, setTitlesBusy] = useState(false)
+  const [seoTitlesBusy, setSeoTitlesBusy] = useState(false)
+  const [bothBusy, setBothBusy] = useState(false)
+  const [showPostList, setShowPostList] = useState(false)
+  const [showMetaList, setShowMetaList] = useState(false)
+  const [titleApplyIdx, setTitleApplyIdx] = useState<number|null>(null)
+  const [seoTitleApplyIdx, setSeoTitleApplyIdx] = useState<number|null>(null)
+  const [metaApplyBusy, setMetaApplyBusy] = useState(false)
+  const [schemaApplyBusy, setSchemaApplyBusy] = useState(false)
+  const [toasts, setToasts] = useState<Array<{id:number,type:'ok'|'err',text:string}>>([])
+  const showToast = (text:string, type:'ok'|'err'='ok')=>{
+    const id = Date.now()+Math.floor(Math.random()*1000)
+    setToasts(t=> [...t, {id, type, text}])
+    setTimeout(()=> setToasts(t=> t.filter(x=> x.id!==id)), 3000)
+  }
   const [imgBusy, setImgBusy] = useState<Record<string, boolean>>({})
   const [imgAlts, setImgAlts] = useState<Record<string,string>>({})
   const [imgKw, setImgKw] = useState<Record<string,string>>({})
@@ -52,6 +69,7 @@ export default function PageClient(){
   const [qcBusy, setQcBusy] = useState<'save'|'test'|null>(null)
   const [crawlList, setCrawlList] = useState<any[]>([])
   const [crawlQuery, setCrawlQuery] = useState('')
+  const [verifyStatus, setVerifyStatus] = useState<{ title?: { ok: boolean, engine?: string }, seo?: { ok: boolean, engine?: string }, desc?: { ok: boolean, engine?: string } }>({})
 
   const siteUrl = gscSiteUrl(siteId)
   const fmt = (d:Date)=> d.toISOString().slice(0,10)
@@ -64,6 +82,10 @@ export default function PageClient(){
       if(j?.pages){ setCrawlList(j.pages as any[]) }
     }).catch(()=>{})
   }, [siteId])
+
+  // Auto-generation of meta titles when opening ideas disabled to avoid
+  // triggering meta ideas when only post titles are requested.
+  useEffect(()=>{ /* intentionally no-op */ }, [activeTab, showIdeas, url, mainKw, titleApplyMode])
 
   const stat = (p:any)=>{
     const clamp=(n:number,min:number,max:number)=> Math.max(min, Math.min(max, n))
@@ -156,6 +178,36 @@ export default function PageClient(){
     return lift
   }
 
+  // Estimate how well a title matches the main keyword
+  // and top queries. Returns a 0-100 score.
+  const matchScore = (t: string) => {
+    const text = (t||'').toLowerCase()
+    const kws: string[] = []
+    const mk = (mainKw||'').trim().toLowerCase(); if(mk) kws.push(mk)
+    queries.slice(0,5).forEach(q=>{ const s=(q.query||'').toLowerCase(); if(s) kws.push(s) })
+    const uniq = Array.from(new Set(kws.filter(Boolean)))
+    if(uniq.length===0) return 0
+    let total = 0
+    for(const kw of uniq){
+      const parts = kw.split(/\s+/).filter(Boolean)
+      if(parts.length===0) continue
+      let hit = 0
+      for(const w of parts){ if(text.includes(w)) hit++ }
+      total += Math.round(hit/parts.length*100)
+    }
+    const avg = Math.round(total / uniq.length)
+    return Math.max(0, Math.min(100, avg))
+  }
+
+  // Predict small CTR and impression gains for display only
+  const predictGains = (t: string) => {
+    const lenLift = Math.max(0, estimateLift(t))
+    const ms = matchScore(t)
+    const ctr = Math.max(1, Math.min(20, Math.round(2 + lenLift*0.3 + ms*0.05)))
+    const impressions = Math.max(1, Math.min(25, Math.round(3 + ms*0.1)))
+    return { ctr, impressions }
+  }
+
   const getWpConfig = () => {
     try{
       if(siteId){
@@ -223,20 +275,79 @@ export default function PageClient(){
     }finally{ setQcBusy(null) }
   }
 
+  const saveAppliedLocal = (next: { title?: string, seoTitle?: string, description?: string, canonical?: string }) => {
+    setApplied(next);
+    if(siteId) try{ localStorage.setItem(`apply:${siteId}:${url}`, JSON.stringify(next)) }catch{}
+  }
+
+  const verifyOnSite = async (kind: 'title'|'seo'|'desc', expected: string) => {
+    try{
+      const cfg = getWpConfig(); if(!cfg) return
+      const usp = new URLSearchParams()
+      usp.set('endpoint', cfg.endpoint)
+      usp.set('token', cfg.token)
+      if(url) usp.set('pageUrl', url)
+      if(Number(wpPostId)>0) usp.set('postId', String(wpPostId))
+      const r = await fetch(`/api/optimize/read?${usp.toString()}`)
+      const j = await r.json().catch(()=>null)
+      const root: any = j?.data
+      const payload: any = root?.data ?? root
+      const engine = payload?.seo_engine || 'Unknown'
+      let ok = false
+      if(kind==='title'){
+        ok = String(payload?.title||'').trim() === String(expected||'').trim()
+        setVerifyStatus(prev=> ({ ...prev, title: { ok, engine } }))
+      } else if(kind==='seo'){
+        const map = payload?.seo_title || {}
+        const vals = Object.values(map).map(v=> String(v||'').trim()) as string[]
+        ok = vals.includes(String(expected||'').trim())
+        setVerifyStatus(prev=> ({ ...prev, seo: { ok, engine } }))
+      } else {
+        const m = payload?.description || {}
+        const vals = Object.values(m).map((v:any)=> String(v||'').trim()) as string[]
+        ok = vals.includes(String(expected||'').trim())
+        setVerifyStatus(prev=> ({ ...prev, desc: { ok, engine } }))
+      }
+      if(ok){ showToast(`Verified on site: ${kind==='title'?'Title':(kind==='seo'?'Meta':'Description')} updated (${engine})`,'ok') }
+      else { showToast(`Could not verify ${kind==='title'?'Title':(kind==='seo'?'Meta':'Description')} on site`,'err') }
+    }catch{}
+  }
+
   const applyToSite = async (title: string) => {
     const cfg = getWpConfig()
     if(!cfg){
-      setApplied({ title, description: scan?.details?.meta, canonical: scan?.details?.canonical })
-      if(siteId) localStorage.setItem(`apply:${siteId}:${url}`, JSON.stringify({ title, description: scan?.details?.meta, canonical: scan?.details?.canonical }))
-      alert('Applied locally. To push to your website, add your WordPress endpoint and token in integrations.')
+      // Local apply preview only
+      saveAppliedLocal({ title, seoTitle: (applied?.seoTitle), description: scan?.details?.meta, canonical: scan?.details?.canonical })
+      showToast('No WordPress connection - saved locally','err')
       return
     }
     try{
-      const res = await fetch('/api/optimize/apply-title', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, title, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
+      const body: any = { endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, postId: (Number(wpPostId)>0? Number(wpPostId): undefined), title }
+      const res = await fetch('/api/optimize/apply', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) })
       const out = await res.json()
-      if(!out?.ok){ alert(out?.error || 'Failed to apply on site'); return }
-      setApplied({ title, description: scan?.details?.meta, canonical: scan?.details?.canonical })
-      if(siteId) localStorage.setItem(`apply:${siteId}:${url}`, JSON.stringify({ title, description: scan?.details?.meta, canonical: scan?.details?.canonical }))
+      if(!out?.ok){ showToast(out?.error || 'Failed to apply on site','err'); return }
+      saveAppliedLocal({ title, seoTitle: (applied?.seoTitle), description: scan?.details?.meta, canonical: scan?.details?.canonical })
+      showToast(`Applied to live site${out?.seo_engine? ' ('+out.seo_engine+')':''}`,'ok')
+      verifyOnSite('title', title)
+    }catch(e:any){ alert(e?.message || 'Failed to apply') }
+  }
+
+  const applySeoTitle = async (seo: string) => {
+    const cfg = getWpConfig()
+    if(!cfg){
+      // Local apply preview only
+      saveAppliedLocal({ title: applied?.title, seoTitle: seo, description: scan?.details?.meta, canonical: scan?.details?.canonical })
+      showToast('No WordPress connection - saved locally','err')
+      return
+    }
+    try{
+      const body: any = { endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, seoTitle: seo, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }
+      const res = await fetch('/api/optimize/apply', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) })
+      const out = await res.json()
+      if(!out?.ok){ showToast(out?.error || 'Failed to apply on site','err'); return }
+      saveAppliedLocal({ title: (applied?.title||scan?.details?.title), seoTitle: seo, description: scan?.details?.meta, canonical: scan?.details?.canonical })
+      showToast('Applied meta title to live site','ok')
+      verifyOnSite('seo', seo)
     }catch(e:any){ alert(e?.message || 'Failed to apply') }
   }
 
@@ -252,21 +363,36 @@ export default function PageClient(){
     revertChanges()
   }
 
+  const revertSeoOnSite = async () => {
+    const cfg = getWpConfig()
+    if(!cfg){
+      saveAppliedLocal({ title: applied?.title, seoTitle: undefined, description: applied?.description, canonical: applied?.canonical })
+      return
+    }
+    try{
+      // Clear meta title so plugin falls back to default (usually H1)
+      const res = await fetch('/api/optimize/apply', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, seoTitle: '', postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
+      await res.json().catch(()=>null)
+      saveAppliedLocal({ title: applied?.title, seoTitle: undefined, description: applied?.description, canonical: applied?.canonical })
+    }catch{}
+  }
+
   const applyMeta = async (desc: string) => {
     const cfg = getWpConfig(); if(!cfg) { alert('Add WordPress endpoint + key in Websites > WordPress Integration'); return }
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, description: desc, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
-    const out = await res.json(); if(!out?.ok){ alert(out?.error||'Apply failed') } else { setApplied(prev=> ({ ...(prev||{}), description: desc })) }
+    const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else { saveAppliedLocal({ ...(applied||{}), description: desc }); showToast('Applied to live site','ok'); verifyOnSite('desc', desc) }
   }
   const applySchema = async (schema: string) => {
     const cfg = getWpConfig(); if(!cfg){ alert('Add WordPress endpoint + key'); return }
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, schema, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
-    const out = await res.json(); if(!out?.ok){ alert(out?.error||'Apply failed') } else { /* ok */ }
+    const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else { showToast('Applied to live site','ok') }
   }
   const applyImages = async (pairs: Array<{src:string, alt:string}>, markApplied: boolean = true) => {
     const cfg = getWpConfig(); if(!cfg){ alert('Add WordPress endpoint + key'); return }
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, images: pairs, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
-    const out = await res.json(); if(!out?.ok){ alert(out?.error||'Apply failed') } else {
+    const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else {
       setImgApplied(prev => { const next = { ...prev }; for(const p of pairs){ next[p.src] = markApplied } return next })
+      showToast('Image alts updated','ok')
     }
   }
 
@@ -340,6 +466,11 @@ export default function PageClient(){
 
   return (
     <>
+      <div className="toast-wrap">
+        {toasts.map(t=> (
+          <div key={t.id} className={`toast ${t.type==='ok'?'ok':'err'}`}>{t.text}</div>
+        ))}
+      </div>
       <div style={{display:'grid', gridTemplateColumns: crawlList.length? '280px 1fr' : '1fr', gap:16}}>
         {crawlList.length>0 && (
           <div className="card" style={{alignSelf:'start'}}>
@@ -401,7 +532,18 @@ export default function PageClient(){
           <div className="panel-title"><strong>Page Card</strong><div className="muted">Optimize your page title and description</div></div>
           <div className="form-grid">
             <label>Page URL</label>
-            <input className="input" value={url} readOnly/>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <a
+                href={url||'#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="icon-btn"
+                title="Open URL in new tab"
+                aria-label="Open URL in new tab"
+                style={{display:'grid', placeItems:'center'}}
+              >↗</a>
+              <input className="input" value={url} readOnly style={{flex:1}}/>
+            </div>
             <label>Page Original Title</label>
             <input className="input" value={scan?.details?.title || ''} readOnly/>
             <label>Page Original Description</label>
@@ -480,15 +622,17 @@ export default function PageClient(){
           {/* Main keyword input */}
           <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center'}}>
             <input className="input" placeholder="Main keyword (optional)" value={mainKw} onChange={e=>setMainKw(e.target.value)} />
-            <button className="btn" style={{display: activeTab==='title'? 'inline-flex':'none'}} onClick={async()=>{
+            <button className="btn" disabled={titlesBusy} style={{display:'none'}} onClick={async()=>{
               try{
+                setTitlesBusy(true)
                 const payload: any = { url }
                 const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
                 const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
                 const out = await res.json()
                 if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate titles') }
               }catch(e:any){ alert(e?.message || 'Failed to generate') }
-            }}>Auto Optimize Page Title</button>
+              finally{ setTitlesBusy(false) }
+            }}>{titlesBusy? (<><span className="spinner"/> Generating…</>) : 'Auto Optimize Page Title'}</button>
             <button className="btn" style={{display: activeTab==='description'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setMetaBusy(true)
@@ -504,7 +648,71 @@ export default function PageClient(){
                 const out = await r.json(); if(out?.ok){ if(!(keepEdits && schemaEdited)) setProposedSchema(out.schema); await applySchema(out.schema) } else { alert(out?.error||'Generate failed') }
               } finally{ setSchemaBusy(false) }
             }}>{schemaBusy? <span className="spinner"/> : 'Auto Schema Markup Generation'}</button>
+            {/* Explicit post title ideas generator */}
+            <button className="btn secondary" style={{display: 'none'}} disabled={titlesBusy} onClick={async()=>{
+              try{
+                setTitlesBusy(true)
+                const payload: any = { url }
+                const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
+                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                const out = await res.json().catch(()=>null)
+                if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate titles') }
+              }finally{ setTitlesBusy(false) }
+            }}>{titlesBusy? <><span className="spinner"/> Generating…</> : 'Generate Post Title Ideas'}</button>
+            <button className="btn secondary" style={{display: 'none'}} disabled={seoTitlesBusy} onClick={async()=>{
+              try{
+                setSeoTitlesBusy(true)
+                const payload: any = { url }
+                const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
+                const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                const out = await res.json().catch(()=>null)
+                if(out?.ok){ setSeoIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate SEO titles') }
+              }finally{ setSeoTitlesBusy(false) }
+            }}>{seoTitlesBusy? <><span className="spinner"/> Generating…</> : 'Generate Meta Title Ideas'}</button>
           </div>
+
+          {/* Extra generators */}
+          {activeTab==='title' && (
+            <div style={{display:'flex', gap:8, alignItems:'center', marginTop:8}}>
+              <button className="btn secondary" disabled={titlesBusy} onClick={async()=>{
+                try{
+                  setTitlesBusy(true)
+                  const payload: any = { url }
+                  const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
+                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  const out = await res.json().catch(()=>null)
+                  if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true); setShowPostList(true); setShowMetaList(false) } else { alert(out?.error||'Failed to generate titles') }
+                } finally{ setTitlesBusy(false) }
+              }}>{titlesBusy? <><span className="spinner"/> Generating.</> : 'Generate Post Titles'}</button>
+
+              <button className="btn secondary" disabled={seoTitlesBusy} onClick={async()=>{
+                try{
+                  setSeoTitlesBusy(true)
+                  const payload: any = { url }
+                  const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
+                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  const out = await res.json().catch(()=>null)
+                  if(out?.ok){ setSeoIdeas(out.ideas||[]); setShowIdeas(true); setShowMetaList(true); setShowPostList(false) } else { alert(out?.error||'Failed to generate SEO titles') }
+                } finally{ setSeoTitlesBusy(false) }
+              }}>{seoTitlesBusy? <><span className="spinner"/> Generating.</> : 'Generate Meta Titles'}</button>
+              <button className="btn secondary" disabled={bothBusy || titlesBusy || seoTitlesBusy} onClick={async()=>{
+                try{
+                  setBothBusy(true); setTitlesBusy(true); setSeoTitlesBusy(true)
+                  const kw = (mainKw||'').trim()
+                  const payload: any = { url }; if(kw) payload.keywords = [kw]
+                  const [r1, r2] = await Promise.all([
+                    fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }),
+                    fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  ])
+                  const [o1, o2] = await Promise.all([r1.json().catch(()=>null), r2.json().catch(()=>null)])
+                  if(o1?.ok) setIdeas(o1.ideas||[])
+                  if(o2?.ok) setSeoIdeas(o2.ideas||[])
+                  if(!(o1?.ok||o2?.ok)) alert('Failed to generate titles')
+                  setShowIdeas(true); setShowPostList(true); setShowMetaList(true)
+                } finally { setBothBusy(false); setTitlesBusy(false); setSeoTitlesBusy(false) }
+              }}>{bothBusy? <><span className="spinner"/> Generating.</> : 'Generate Post + Meta Titles'}</button>
+            </div>
+          )}
 
           {/* Titles list */}
           {activeTab==='title' && (
@@ -513,27 +721,97 @@ export default function PageClient(){
               <div className="title-card">{scan?.details?.title || '-'}</div>
             </div>
           )}
-          {activeTab==='title' && showIdeas && (
+
+          {/* Pinned: currently applied values */}
+          {activeTab==='title' && (applied?.title || applied?.seoTitle) && (
             <div style={{marginTop:12}}>
-              {(ideas.length? ideas : titleIdeas).slice(0,7).map((t0,i)=> {
+              <div className="badge" style={{marginBottom:6}}>Currently Applied</div>
+              {applied?.title && (
+                <div className="title-card" style={{marginTop:8, position:'relative', paddingRight:160}}>
+                  <div className="muted" style={{fontSize:12, marginBottom:6}}>Title</div>
+                  <div>{applied.title}</div>
+                  {verifyStatus.title && (
+                    <div className="badge" style={{marginTop:6, background:'#0b1f16', borderColor:'#1e3d2f', color:'#bbf7d0'}}>
+                      {verifyStatus.title.ok? `Verified on site: Title updated (${verifyStatus.title.engine||'OK'})` : 'Not verified on site'}
+                    </div>
+                  )}
+                  <div style={{position:'absolute', right:10, top:10}}>
+                    <button className="btn secondary" style={{height:32}} onClick={revertOnSite}>Revert</button>
+                  </div>
+                </div>
+              )}
+              {applied?.seoTitle && (
+                <div className="title-card" style={{marginTop:8, position:'relative', paddingRight:160}}>
+                  <div className="muted" style={{fontSize:12, marginBottom:6}}>Meta Title</div>
+                  <div>{applied.seoTitle}</div>
+                  {verifyStatus.seo && (
+                    <div className="badge" style={{marginTop:6, background:'#0b1f16', borderColor:'#1e3d2f', color:'#bbf7d0'}}>
+                      {verifyStatus.seo.ok? `Verified on site: Meta updated (${verifyStatus.seo.engine||'OK'})` : 'Not verified on site'}
+                    </div>
+                  )}
+                  <div style={{position:'absolute', right:10, top:10}}>
+                    <button className="btn secondary" style={{height:32}} onClick={revertSeoOnSite}>Revert</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab==='title' && showMetaList && (
+            <div style={{marginTop:18}}>
+              <div className="badge" style={{marginBottom:6}}>Meta Title Ideas</div>
+              {seoTitlesBusy && <div style={{display:'grid', placeItems:'center'}}><span className="spinner"/></div>}
+              {!seoTitlesBusy && Array.isArray(seoIdeas) && (seoIdeas.slice(0,5)).map((t,i)=> (
+                <div key={i} className="title-card" style={{marginTop:12, position:'relative', paddingRight:160, paddingBottom:30}}>
+                  <input className="input" style={{width:'100%', height:44, lineHeight:'22px', paddingRight:8}} value={t} onChange={e=>{ const next=[...seoIdeas]; next[i]=e.target.value; setSeoIdeas(next) }} />
+                  <div style={{position:'absolute', right:10, top:10, display:'flex', gap:6}}>
+                    {applied?.seoTitle===t ? (
+                      <button className="btn secondary" style={{height:36}} onClick={revertSeoOnSite}>Revert</button>
+                    ) : (
+                      <button className="btn" style={{height:36}} disabled={seoTitleApplyIdx===i} onClick={async()=>{ try{ setSeoTitleApplyIdx(i); await applySeoTitle(seoIdeas[i]) } finally{ setSeoTitleApplyIdx(null) } }}>{seoTitleApplyIdx===i? <><span className="spinner"/> Applying.</> : 'Apply to Site'}</button>
+                    )}
+                  </div>
+              <div style={{position:'absolute', left:10, bottom:6, display:'flex', gap:8, alignItems:'center'}}>
+                <span className="badge" style={{fontSize:11, padding:'2px 6px'}}>Meta</span>
+                <span className="muted" style={{fontSize:12}}>CTR +{predictGains(t).ctr}% {'·'} Impr +{predictGains(t).impressions}%</span>
+              </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Apply mode buttons removed */}
+          {activeTab==='title' && showPostList && (
+            <div style={{marginTop:12}}>
+              {(() => { const baseList = (Array.isArray(ideas) && ideas.length? ideas : (Array.isArray(titleIdeas)? titleIdeas : [])) as string[]; return baseList.slice(0,5).map((t0,i)=> {
                 const t = t0 || ''
                 return (
-                  <div key={i} className="title-card" style={{marginTop:12, position:'relative', paddingRight:160}}>
-                    <input className="input" style={{width:'100%'}} value={t} onChange={e=>{
-                      const next=[...(ideas.length? ideas : titleIdeas)]; next[i]=e.target.value; setIdeas(next)
+                  <div key={i} className="title-card" style={{marginTop:12, position:'relative', paddingRight:160, paddingBottom:30}}>
+                    <input className="input" style={{width:'100%', height:44, lineHeight:'22px', paddingRight:8}} value={t} onChange={e=>{
+                      const next=[...baseList]; next[i]=e.target.value; setIdeas(next)
                     }} />
                     {(()=>{ const isActive = (applied?.title||'') === t; return (
                       <div style={{position:'absolute', right:10, top:10, display:'flex', gap:6}}>
-                        {!isActive && <button className="btn" style={{height:36}} onClick={()=>applyToSite((ideas.length? ideas:titleIdeas)[i])}>Apply to Site</button>}
+                        {!isActive && (
+                          <button
+                            className="btn"
+                            style={{height:36}}
+                            disabled={titleApplyIdx===i}
+                            onClick={async()=>{
+                              try{ setTitleApplyIdx(i); await applyToSite(baseList[i]) }
+                              finally{ setTitleApplyIdx(null) }
+                            }}
+                          >{titleApplyIdx===i? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button>
+                        )}
                         {isActive && <button className="btn secondary" style={{height:36}} onClick={revertOnSite}>Revert</button>}
                       </div>
                     ) })()}
-                    <div style={{position:'absolute', left:10, bottom:10}}>
-                      <span className={`growth-badge ${estimateLift(t)>=0? 'up':'down'}`}>{estimateLift(t)>=0? '+':''}{estimateLift(t)}%</span>
+                    <div style={{position:'absolute', left:10, bottom:6, display:'flex', gap:8, alignItems:'center'}}>
+                      <span className="badge" style={{fontSize:11, padding:'2px 6px'}}>Title</span>
+                      <span className="muted" style={{fontSize:12}}>CTR +{predictGains(t).ctr}% {'·'} Impr +{predictGains(t).impressions}%</span>
                     </div>
                   </div>
                 )
-              })}
+              }) })()}
             </div>
           )}
 
@@ -552,7 +830,7 @@ export default function PageClient(){
                 <div style={{marginTop:10}}>
                   <div className="badge" style={{marginBottom:6}}>Proposed Description</div>
                   <textarea className="textarea" value={proposedMeta} onChange={e=>{ setProposedMeta(e.target.value); setMetaEdited(true) }} />
-                  <div className="actions"><button className="btn" onClick={()=>applyMeta(proposedMeta)}>Apply to Site</button></div>
+                  <div className="actions"><button className="btn" disabled={metaApplyBusy} onClick={async()=>{ try{ setMetaApplyBusy(true); await applyMeta(proposedMeta) } finally{ setMetaApplyBusy(false) } }}>{metaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button></div>
                 </div>
               )}
             </div>
@@ -658,7 +936,7 @@ export default function PageClient(){
               {proposedSchema && (
                 <div style={{marginTop:10}}>
                   <textarea className="textarea" value={proposedSchema} onChange={e=>{ setProposedSchema(e.target.value); setSchemaEdited(true) }} style={{minHeight:160}}/>
-                  <div className="actions"><button className="btn" onClick={()=>applySchema(proposedSchema)}>Apply to Site</button></div>
+                  <div className="actions"><button className="btn" disabled={schemaApplyBusy} onClick={async()=>{ try{ setSchemaApplyBusy(true); await applySchema(proposedSchema) } finally{ setSchemaApplyBusy(false) } }}>{schemaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button></div>
                 </div>
               )}
             </div>
@@ -737,3 +1015,4 @@ function Donut({ value }: { value: number }){
     </div>
   )
 }
+

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { load } from 'cheerio'
+
 export const runtime = 'nodejs'
 
 async function extractFromUrl(url?: string){
@@ -24,21 +25,18 @@ export async function POST(req: NextRequest){
 
     const context = await extractFromUrl(url)
     const openai = new OpenAI({ apiKey })
-    const sys = `You are an expert SEO title generator for 2025. Output strictly JSON: { ideas: string[] }.
-Rules: Return 7 unique, high-quality page title ideas that follow modern SEO best practices.
-- Length: 50–60 characters ideal (hard cap 65, min 30)
-- Intent-first: reflect the user’s search intent (informational, transactional, local, etc.)
-- Primary keyword: include once, preferably toward the beginning, in natural language
-- Readability: Natural Title Case, no ALL CAPS, no keyword stuffing
-- Specificity: use concrete modifiers (year, location, category, benefit) when relevant
-- Branding: if a brand appears in the existing title/H1, place it at the end after a separator (– or |)
-- Clean: avoid truncation, clickbait, excessive punctuation, brackets spam, or emoji
-- Uniqueness: avoid duplicates or minor rewrites; each idea should be meaningfully different`;
+    const sys = `You are an expert SEO strategist. Generate meta (SEO) title ideas. Output strictly JSON: { ideas: string[] }.
+Rules (2025):
+- Return 5 unique meta titles optimized for CTR and clarity
+- 50–60 chars ideal (cap 65; min 30)
+- Include the primary keyword once near the beginning in natural language
+- Optional brand at end after a separator (– or |) if present
+- Avoid duplicates, brackets spam, emojis, and clickbait`;
     const user = `Page URL: ${url||'N/A'}
-Primary keyword(s): ${(keywords||[]).join(', ')||'N/A'}
-Existing title: ${context.title||'N/A'}
+Primary keyword(s): ${(Array.isArray(keywords)?keywords:[]).join(', ')||'N/A'}
+Existing HTML <title>: ${context.title||'N/A'}
 H1: ${context.h1||'N/A'}
-Meta: ${context.description||'N/A'}
+Meta description: ${context.description||'N/A'}
 Return only JSON.`
     const resp = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -48,12 +46,11 @@ Return only JSON.`
     })
     const content = resp.choices?.[0]?.message?.content || '{"ideas":[]}'
     const data = JSON.parse(content)
-    let ideas: string[] = Array.isArray(data.ideas) ? data.ideas.slice(0,7) : []
-    // Final clamp: length and cleanup
+    let ideas: string[] = Array.isArray(data.ideas) ? data.ideas.slice(0,5) : []
     ideas = ideas.map((s:string)=> (s||'').trim().replace(/\s+/g,' ').slice(0,65))
     return NextResponse.json({ ok:true, ideas })
   }catch(e:any){
-    return NextResponse.json({ ok:false, error: e?.message || 'AI titles failed' }, { status: 500 })
+    return NextResponse.json({ ok:false, error: e?.message || 'AI SEO titles failed' }, { status: 500 })
   }
 }
 

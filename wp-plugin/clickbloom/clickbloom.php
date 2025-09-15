@@ -544,6 +544,7 @@ add_action('admin_post_clickbloom_revert_all', function(){
     $backup = get_post_meta($pid, 'clickbloom_backup', true);
     if($backup){ $b = json_decode($backup, true); if(is_array($b)){
       if(isset($b['title'])){ wp_update_post(['ID'=>$pid, 'post_title'=>wp_strip_all_tags($b['title'])]); }
+      if(isset($b['seo_title'])){ $v = sanitize_text_field($b['seo_title']); update_post_meta($pid, 'clickbloom_seo_title', $v); update_post_meta($pid, '_yoast_wpseo_title', $v); update_post_meta($pid, 'rank_math_title', $v); update_post_meta($pid, '_seopress_titles_title', $v); }
       if(isset($b['meta'])){ update_post_meta($pid, 'clickbloom_meta_description', sanitize_text_field($b['meta'])); update_post_meta($pid, '_yoast_wpseo_metadesc', sanitize_text_field($b['meta'])); }
       if(isset($b['canonical'])){ update_post_meta($pid, 'clickbloom_canonical', esc_url_raw($b['canonical'])); update_post_meta($pid, '_yoast_wpseo_canonical', esc_url_raw($b['canonical'])); }
       if(isset($b['schema'])){ update_post_meta($pid, 'clickbloom_schema', wp_json_encode($b['schema'])); }
@@ -583,6 +584,7 @@ add_action('rest_api_init', function(){
       $changes = [];
       $backup = [
         'title' => get_post_field('post_title', $post_id),
+        'seo_title' => get_post_meta($post_id, '_yoast_wpseo_title', true) ?: get_post_meta($post_id, 'rank_math_title', true) ?: get_post_meta($post_id, '_seopress_titles_title', true) ?: get_post_meta($post_id, 'clickbloom_seo_title', true),
         'meta' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true) ?: get_post_meta($post_id, 'clickbloom_meta_description', true),
         'canonical' => get_post_meta($post_id, '_yoast_wpseo_canonical', true) ?: get_post_meta($post_id, 'clickbloom_canonical', true),
         'schema' => json_decode(get_post_meta($post_id, 'clickbloom_schema', true) ?: 'null', true),
@@ -590,18 +592,72 @@ add_action('rest_api_init', function(){
       update_post_meta($post_id, 'clickbloom_backup', wp_json_encode($backup));
 
       if(isset($req['title'])){ $title = wp_strip_all_tags($req['title']); wp_update_post(['ID'=>$post_id, 'post_title'=>$title]); $changes['title']=$title; }
-      if(isset($req['description'])){ $desc = sanitize_text_field($req['description']); update_post_meta($post_id, 'clickbloom_meta_description', $desc); update_post_meta($post_id, '_yoast_wpseo_metadesc', $desc); $changes['meta']=$desc; }
-      if(isset($req['canonical'])){ $can = esc_url_raw($req['canonical']); update_post_meta($post_id, 'clickbloom_canonical', $can); update_post_meta($post_id, '_yoast_wpseo_canonical', $can); $changes['canonical']=$can; }
+      if(isset($req['seoTitle'])){
+        $st = sanitize_text_field($req['seoTitle']);
+        update_post_meta($post_id, 'clickbloom_seo_title', $st);
+        // Yoast
+        update_post_meta($post_id, '_yoast_wpseo_title', $st);
+        // Rank Math
+        update_post_meta($post_id, 'rank_math_title', $st);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['title'] = $st; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+        // SEOPress
+        update_post_meta($post_id, '_seopress_titles_title', $st);
+        $changes['seo_title'] = $st;
+      }
+      if(isset($req['description'])){
+        $desc = sanitize_text_field($req['description']);
+        update_post_meta($post_id, 'clickbloom_meta_description', $desc);
+        // Yoast
+        update_post_meta($post_id, '_yoast_wpseo_metadesc', $desc);
+        // Rank Math
+        update_post_meta($post_id, 'rank_math_description', $desc);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['description'] = $desc; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+        $changes['meta'] = $desc;
+      }
+      if(isset($req['canonical'])){
+        $can = esc_url_raw($req['canonical']);
+        update_post_meta($post_id, 'clickbloom_canonical', $can);
+        // Yoast
+        update_post_meta($post_id, '_yoast_wpseo_canonical', $can);
+        // Rank Math
+        update_post_meta($post_id, 'rank_math_canonical_url', $can);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['canonical_url'] = $can; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+        $changes['canonical'] = $can;
+      }
+      // Make sure caches are clean so front‑end sees updates immediately
+      clean_post_cache($post_id);
       if(isset($req['schema'])){ $schema = is_string($req['schema'])? $req['schema'] : wp_json_encode($req['schema']); update_post_meta($post_id, 'clickbloom_schema', $schema); $changes['schema']='updated'; }
       // Image alts: update attachment meta and attempt to update post content
       if(isset($req['images']) && is_array($req['images'])){
         $content = get_post_field('post_content', $post_id);
+        // helper to resolve attachment ID more reliably (CDN/sized URLs)
+        $resolve_id = function($src){
+          $aid = attachment_url_to_postid($src);
+          if($aid) return $aid;
+          global $wpdb;
+          // Try GUID match
+          $aid = (int)$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type='attachment' AND guid=%s LIMIT 1", $src));
+          if($aid) return $aid;
+          // Try file meta match by basename
+          $basename = wp_basename(parse_url($src, PHP_URL_PATH));
+          if($basename){
+            $aid = (int)$wpdb->get_var($wpdb->prepare(
+              "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+              '%'.$wpdb->esc_like($basename)
+            ));
+            if($aid) return $aid;
+          }
+          return 0;
+        };
         foreach($req['images'] as $img){
           $src = isset($img['src']) ? esc_url_raw($img['src']) : '';
           $alt = isset($img['alt']) ? sanitize_text_field($img['alt']) : '';
           if(!$src || !$alt) continue;
           // attachment
-          $aid = attachment_url_to_postid($src);
+          $aid = $resolve_id($src);
           if($aid){ update_post_meta($aid, '_wp_attachment_image_alt', $alt); }
           // content replace (best-effort)
           $quoted = preg_quote($src, '~');
@@ -619,8 +675,20 @@ add_action('rest_api_init', function(){
         wp_update_post([ 'ID'=>$post_id, 'post_content'=>$content ]);
         $changes['images']='updated';
       }
-      clickbloom_log('update', $changes, $post_id);
-      return new WP_REST_Response(['ok'=>true, 'postId'=>$post_id, 'applied'=>$changes], 200);
+      // Detect likely SEO plugin for title
+      $engine = 'Unknown';
+      if(get_post_meta($post_id, '_yoast_wpseo_title', true) !== '') $engine = 'Yoast';
+      elseif(get_post_meta($post_id, 'rank_math_title', true) !== '') $engine = 'Rank Math';
+      elseif(get_post_meta($post_id, '_seopress_titles_title', true) !== '') $engine = 'SEOPress';
+      clickbloom_log('update', array_merge($changes, ['seo_engine'=>$engine]), $post_id);
+      // Record a quick admin notice payload
+      update_option('clickbloom_last_update', [
+        'time' => time(),
+        'post_id' => $post_id,
+        'changes' => $changes,
+        'engine' => $engine,
+      ]);
+      return new WP_REST_Response(['ok'=>true, 'postId'=>$post_id, 'applied'=>$changes, 'seo_engine'=>$engine], 200);
     },
     'permission_callback' => '__return_true'
   ]);
@@ -679,8 +747,32 @@ add_action('rest_api_init', function(){
       $backup = get_post_meta($post_id, 'clickbloom_backup', true); if(!$backup) return new WP_REST_Response(['ok'=>false,'error'=>'No backup found'], 404);
       $b = json_decode($backup, true); if(!is_array($b)) return new WP_REST_Response(['ok'=>false,'error'=>'Invalid backup'], 400);
       if(isset($b['title'])){ wp_update_post(['ID'=>$post_id, 'post_title'=>wp_strip_all_tags($b['title'])]); }
-      if(isset($b['meta'])){ update_post_meta($post_id, 'clickbloom_meta_description', sanitize_text_field($b['meta'])); update_post_meta($post_id, '_yoast_wpseo_metadesc', sanitize_text_field($b['meta'])); }
-      if(isset($b['canonical'])){ update_post_meta($post_id, 'clickbloom_canonical', esc_url_raw($b['canonical'])); update_post_meta($post_id, '_yoast_wpseo_canonical', esc_url_raw($b['canonical'])); }
+      if(isset($b['seo_title'])){
+        $v = sanitize_text_field($b['seo_title']);
+        update_post_meta($post_id, 'clickbloom_seo_title', $v);
+        update_post_meta($post_id, '_yoast_wpseo_title', $v);
+        update_post_meta($post_id, 'rank_math_title', $v);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['title'] = $v; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+        update_post_meta($post_id, '_seopress_titles_title', $v);
+      }
+      if(isset($b['meta'])){
+        $d = sanitize_text_field($b['meta']);
+        update_post_meta($post_id, 'clickbloom_meta_description', $d);
+        update_post_meta($post_id, '_yoast_wpseo_metadesc', $d);
+        update_post_meta($post_id, 'rank_math_description', $d);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['description'] = $d; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+      }
+      if(isset($b['canonical'])){
+        $c = esc_url_raw($b['canonical']);
+        update_post_meta($post_id, 'clickbloom_canonical', $c);
+        update_post_meta($post_id, '_yoast_wpseo_canonical', $c);
+        update_post_meta($post_id, 'rank_math_canonical_url', $c);
+        $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+        $rm_opts['canonical_url'] = $c; update_post_meta($post_id, 'rank_math_options', $rm_opts);
+      }
+      clean_post_cache($post_id);
       if(isset($b['schema'])){ update_post_meta($post_id, 'clickbloom_schema', wp_json_encode($b['schema'])); }
       clickbloom_log('revert', $b, $post_id);
       return new WP_REST_Response(['ok'=>true], 200);
@@ -708,6 +800,49 @@ add_action('rest_api_init', function(){
           'config' => home_url('/wp-json/clickbloom/v1/config'),
         ],
       ], 200);
+    },
+    'permission_callback' => '__return_true'
+  ]);
+
+  // Read current values on a post (for verification from the app)
+  register_rest_route('clickbloom/v1', '/read', [
+    'methods' => 'GET',
+    'callback' => function(WP_REST_Request $req){
+      $opt = clickbloom_get_options(); $token = sanitize_text_field($req['token']);
+      if(!$opt['api_key'] || $token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
+      $post_id = intval($req['postId']); $url = esc_url_raw($req['url']);
+      if(!$post_id && $url){ $post_id = url_to_postid($url); }
+      if(!$post_id) return new WP_REST_Response(['ok'=>false,'error'=>'Post not found'], 404);
+      $rm_opts = get_post_meta($post_id, 'rank_math_options', true); if(!is_array($rm_opts)) $rm_opts = [];
+      $data = [
+        'postId' => $post_id,
+        'title' => get_post_field('post_title', $post_id),
+        'seo_title' => [
+          'clickbloom' => get_post_meta($post_id, 'clickbloom_seo_title', true),
+          'rank_math_title' => get_post_meta($post_id, 'rank_math_title', true),
+          'rank_math_options_title' => isset($rm_opts['title']) ? $rm_opts['title'] : '',
+          'yoast' => get_post_meta($post_id, '_yoast_wpseo_title', true),
+          'seopress' => get_post_meta($post_id, '_seopress_titles_title', true),
+        ],
+        'description' => [
+          'clickbloom' => get_post_meta($post_id, 'clickbloom_meta_description', true),
+          'yoast' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true),
+          'rank_math_description' => get_post_meta($post_id, 'rank_math_description', true),
+          'rank_math_options_description' => isset($rm_opts['description']) ? $rm_opts['description'] : '',
+        ],
+        'canonical' => [
+          'clickbloom' => get_post_meta($post_id, 'clickbloom_canonical', true),
+          'yoast' => get_post_meta($post_id, '_yoast_wpseo_canonical', true),
+          'rank_math_canonical_url' => get_post_meta($post_id, 'rank_math_canonical_url', true),
+          'rank_math_options_canonical_url' => isset($rm_opts['canonical_url']) ? $rm_opts['canonical_url'] : '',
+        ],
+      ];
+      $engine = 'Unknown';
+      if(!empty($data['seo_title']['yoast'])) $engine = 'Yoast';
+      elseif(!empty($data['seo_title']['rank_math_title']) || !empty($data['seo_title']['rank_math_options_title'])) $engine = 'Rank Math';
+      elseif(!empty($data['seo_title']['seopress'])) $engine = 'SEOPress';
+      $data['seo_engine'] = $engine;
+      return new WP_REST_Response(['ok'=>true, 'data'=>$data], 200);
     },
     'permission_callback' => '__return_true'
   ]);
@@ -746,12 +881,53 @@ add_action('rest_api_init', function(){
 // Output meta/canonical/schema if our meta exists (as fallback)
 add_action('wp_head', function(){
   if(is_admin()) return; global $post; if(!$post) return; $pid = $post->ID;
-  $desc = get_post_meta($pid, 'clickbloom_meta_description', true);
-  $can = get_post_meta($pid, 'clickbloom_canonical', true);
+  // Output only schema here. Let SEO plugins (Rank Math/Yoast/SEOPress) output meta description/canonical
+  // to avoid duplicate tags. We override their values via filters below.
   $schema = get_post_meta($pid, 'clickbloom_schema', true);
-  if($desc) echo '\n<meta name="description" content="'.esc_attr($desc).'" />\n';
-  if($can) echo '\n<link rel="canonical" href="'.esc_url($can).'" />\n';
   if($schema){ echo '\n<script type="application/ld+json">'.wp_kses_post($schema).'</script>\n'; }
+}, 9);
+
+// Rank Math overrides (no duplication — changes their output)
+add_filter('rank_math/frontend/title', function($title){
+  if(is_admin()) return $title; global $post; if(!$post) return $title;
+  $custom = get_post_meta($post->ID, 'clickbloom_seo_title', true);
+  return $custom ? $custom : $title;
+}, 99);
+add_filter('rank_math/frontend/description', function($desc){
+  if(is_admin()) return $desc; global $post; if(!$post) return $desc;
+  $custom = get_post_meta($post->ID, 'clickbloom_meta_description', true);
+  return $custom ? $custom : $desc;
+}, 99);
+add_filter('rank_math/frontend/canonical', function($url){
+  if(is_admin()) return $url; global $post; if(!$post) return $url;
+  $custom = get_post_meta($post->ID, 'clickbloom_canonical', true);
+  return $custom ? $custom : $url;
+}, 99);
+
+// Yoast overrides as well (if Yoast is active)
+add_filter('wpseo_title', function($title){
+  if(is_admin()) return $title; global $post; if(!$post) return $title;
+  $custom = get_post_meta($post->ID, 'clickbloom_seo_title', true);
+  return $custom ? $custom : $title;
+}, 99);
+add_filter('wpseo_metadesc', function($desc){
+  if(is_admin()) return $desc; global $post; if(!$post) return $desc;
+  $custom = get_post_meta($post->ID, 'clickbloom_meta_description', true);
+  return $custom ? $custom : $desc;
+}, 99);
+add_filter('wpseo_canonical', function($url){
+  if(is_admin()) return $url; global $post; if(!$post) return $url;
+  $custom = get_post_meta($post->ID, 'clickbloom_canonical', true);
+  return $custom ? $custom : $url;
+}, 99);
+
+// Fallback document title if NO SEO plugin is active
+add_filter('document_title_parts', function($parts){
+  if(is_admin()) return $parts; if(defined('RANK_MATH_VERSION') || defined('WPSEO_VERSION') || defined('SEOPRESS_VERSION')) return $parts;
+  global $post; if(!$post) return $parts; $pid = $post->ID;
+  $custom = get_post_meta($pid, 'clickbloom_seo_title', true);
+  if($custom) $parts['title'] = $custom;
+  return $parts;
 }, 9);
 
 // Validation runner
@@ -770,3 +946,22 @@ function clickbloom_run_validation($manual=false){
 }
 
 add_action('clickbloom_validate_event', function(){ clickbloom_run_validation(false); });
+
+// Show a quick admin notice after an update arrives via REST
+add_action('admin_notices', function(){
+  if(!current_user_can('manage_options')) return;
+  $last = get_option('clickbloom_last_update');
+  if(!$last || !is_array($last)) return;
+  $post_id = intval($last['post_id']);
+  $changes = isset($last['changes']) && is_array($last['changes']) ? array_keys(array_filter($last['changes'])) : [];
+  $engine = isset($last['engine']) ? esc_html($last['engine']) : 'Unknown';
+  $post_link = $post_id ? esc_url(get_edit_post_link($post_id)) : '';
+  $label = $post_id ? ('Post #'.$post_id) : 'Unknown post';
+  $changed = $changes ? implode(', ', array_map('esc_html', $changes)) : 'none';
+  echo '<div class="notice notice-success is-dismissible"><p><strong>ClickBloom:</strong> Applied changes to '.$label.
+       ($post_link? ' (<a href="'.$post_link.'">Edit</a>)':'').
+       '. Changed: '.$changed.'. SEO Engine: '.$engine.'. '.
+       '<a href="'.esc_url(admin_url('admin.php?page=clickbloom-logs')).'">View logs</a></p></div>';
+  // show once
+  delete_option('clickbloom_last_update');
+});
