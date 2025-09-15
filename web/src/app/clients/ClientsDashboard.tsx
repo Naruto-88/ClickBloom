@@ -65,6 +65,7 @@ export default function ClientsDashboard(){
   const presets = useMemo(()=>([
     { key:'7d', label:'7 Days', range: lastNDays(7) },
     { key:'30d', label:'30 Days', range: lastNDays(30) },
+    { key:'3m', label:'Last 3 Months', range: lastNDays(90) },
     { key:'lastm', label:'Last Month', range: lastMonth() },
     { key:'6m', label:'Last 6 Months', range: lastNDays(180) },
     { key:'1y', label:'Last Year', range: lastNDays(365) },
@@ -274,43 +275,40 @@ export default function ClientsDashboard(){
         <div className="muted" style={{fontSize:12, marginBottom:8}}>
           Showing {sorted.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
         </div>
-        <div style={{display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px 44px', gap:8, alignItems:'center', fontSize:13, padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
+        <div className="clients-grid cols" style={{padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
           <div style={{opacity:.8}}>Client</div>
           <div style={{opacity:.8}}>GSC Clicks</div>
           <div style={{opacity:.8}}>GSC Impressions</div>
           <div style={{opacity:.8}}>GSC Avg Pos</div>
           <div style={{opacity:.8}}>GA4 Sessions</div>
-          <div style={{opacity:0}}>Open</div>
+          <div style={{opacity:.8, textAlign:'center'}}>Actions</div>
         </div>
         {sorted.map(r=>{
           const stColor = r.status==='bad'? '#ef4444' : r.status==='warn'? '#f59e0b' : '#10b981'
           const isHi = highlightId===r.id
           return (
-            <div key={r.id}
-              style={{
-                display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px 44px', gap:8, alignItems:'center',
+            <div key={r.id} className="clients-grid cols" style={{
                 padding:'8px 8px', borderRadius:10, margin:'4px 0', border:'1px dashed #2b2b47',
-                background: isHi? '#121228' : '#0f0f20',
-                outline: isHi? '2px solid var(--accent)' : undefined
+                background: isHi? '#121228' : '#0f0f20', outline: isHi? '2px solid var(--accent)' : undefined
               }}>
-              <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <div className="client-cell" style={{display:'flex', alignItems:'center', gap:10, minWidth:0}}>
                 <span style={{width:8,height:8,borderRadius:999,background:stColor, boxShadow:'0 0 10px rgba(0,0,0,.3)'}}/>
-                <div>
-                  <div style={{fontWeight:700}}>{r.name}</div>
-                  <div className="muted" style={{fontSize:12}}>{r.url}</div>
+                <div style={{minWidth:0}}>
+                  <div style={{fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{r.name}</div>
+                  <div className="muted" style={{fontSize:12, overflowWrap:'anywhere'}}>{r.url}</div>
                 </div>
               </div>
-              <div style={{display:'flex', alignItems:'center', gap:6}}>
+              <div className="metric-cell" style={{display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap'}}>
                 <strong>{fmt(r.gscClicks)}</strong>
                 {fmtDelta(r.gscClicks, r.gscClicksPrev)}
                 {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscClicksPrev)}</span>}
               </div>
-              <div style={{display:'flex', alignItems:'center', gap:6}}>
+              <div className="metric-cell" style={{display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap'}}>
                 <strong>{fmt(r.gscImpr)}</strong>
                 {fmtDelta(r.gscImpr, r.gscImprPrev)}
                 {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscImprPrev)}</span>}
               </div>
-              <div style={{display:'flex', alignItems:'center', gap:6}}>
+              <div className="metric-cell" style={{display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap'}}>
                 <strong>{r.gscPos.toFixed(1)}</strong>
                 {/* For position lower is better; invert */}
                 <span>
@@ -320,12 +318,22 @@ export default function ClientsDashboard(){
                 </span>
                 {showPrev && <span className="muted" style={{fontSize:11}}>prev {r.gscPosPrev.toFixed(1)}</span>}
               </div>
-              <div style={{display:'flex', alignItems:'center', gap:6}}>
+              <div className="metric-cell" style={{display:'flex', alignItems:'center', gap:6, whiteSpace:'nowrap'}}>
                 <strong>{fmt(r.ga4Sessions)}</strong>
                 {fmtDelta(r.ga4Sessions, r.ga4SessionsPrev)}
                 {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.ga4SessionsPrev)}</span>}
               </div>
-              <div style={{display:'grid', placeItems:'center'}}>
+              <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>
+                <button
+                  onClick={()=>{ window.open(r.url, '_blank', 'noopener,noreferrer') }}
+                  title="Open website"
+                  className="icon-btn"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" stroke="currentColor" strokeWidth="2" fill="none"/>
+                    <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  </svg>
+                </button>
                 <button
                   onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; router.push('/dashboard') }}
                   title="Open client dashboard"
@@ -351,6 +359,11 @@ export default function ClientsDashboard(){
         @keyframes blink { 50% { opacity: .35 } }
         .icon-btn{ width:28px; height:28px; display:grid; place-items:center; border-radius:8px; border:1px solid #2b2b47; background:#121228; color: var(--accent); cursor:pointer; }
         .icon-btn:hover{ filter: brightness(1.1); }
+        .clients-grid{ display:grid; gap:8px; align-items:center; }
+        .clients-grid.cols{ grid-template-columns: minmax(280px, 2fr) repeat(3, minmax(130px, 1fr)) minmax(130px, 1fr) 72px; }
+        @media (max-width: 1200px){ .clients-grid.cols{ grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 1fr)) minmax(120px, 1fr) 68px } }
+        @media (max-width: 1000px){ .clients-grid.cols{ grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(110px, 1fr)) minmax(110px, 1fr) 64px } }
+        @media (max-width: 860px){ .clients-grid.cols{ grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(100px, 1fr)) minmax(100px, 1fr) 60px } }
       `}</style>
     </>
   )
