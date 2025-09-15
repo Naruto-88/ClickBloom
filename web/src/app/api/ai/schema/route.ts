@@ -17,10 +17,11 @@ async function extract(url: string){
 
 export async function POST(req: NextRequest){
   try{
-    const { url, keywords, schemaType } = await req.json()
+    const { url, keywords, schemaType, apiKey: bodyKey, model: bodyModel } = await req.json()
     if(!url) return NextResponse.json({ ok:false, error:'Missing url' }, { status: 400 })
-    const apiKey = process.env.OPENAI_API_KEY
-    if(!apiKey) return NextResponse.json({ ok:false, error:'Missing OPENAI_API_KEY' }, { status: 500 })
+    const headerKey = req.headers.get('x-openai-key') || undefined
+    const apiKey = bodyKey || headerKey || process.env.OPENAI_API_KEY
+    if(!apiKey) return NextResponse.json({ ok:false, error:'Missing API key (provide in body as apiKey or set OPENAI_API_KEY)' }, { status: 400 })
     const openai = new OpenAI({ apiKey })
     const ctx = await extract(url)
     const prompt = `Generate valid JSON-LD ${schemaType||'Article'} schema for the following page. Only return JSON.
@@ -31,7 +32,7 @@ Title: ${ctx.title}
 H1: ${ctx.h1}
 Meta: ${ctx.meta}
 Content sample: ${ctx.text}`
-    const r = await openai.chat.completions.create({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages:[{role:'user', content:prompt}], temperature:0.3, response_format:{ type:'json_object' as const } })
+    const r = await openai.chat.completions.create({ model: bodyModel || process.env.OPENAI_MODEL || 'gpt-4o-mini', messages:[{role:'user', content:prompt}], temperature:0.3, response_format:{ type:'json_object' as const } })
     const json = r.choices?.[0]?.message?.content || '{}'
     return NextResponse.json({ ok:true, schema: json })
   }catch(e:any){ return NextResponse.json({ ok:false, error: e?.message || 'schema failed' }, { status: 500 }) }

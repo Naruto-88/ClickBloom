@@ -18,9 +18,10 @@ async function extractFromUrl(url?: string){
 
 export async function POST(req: NextRequest){
   try{
-    const { url, keywords } = await req.json()
-    const apiKey = process.env.OPENAI_API_KEY
-    if(!apiKey) return NextResponse.json({ ok:false, error:'Missing OPENAI_API_KEY' }, { status: 500 })
+    const { url, keywords, apiKey: bodyKey, model: bodyModel } = await req.json()
+    const headerKey = req.headers.get('x-openai-key') || undefined
+    const apiKey = bodyKey || headerKey || process.env.OPENAI_API_KEY
+    if(!apiKey) return NextResponse.json({ ok:false, error:'Missing API key (provide in body as apiKey or set OPENAI_API_KEY)' }, { status: 400 })
 
     const context = await extractFromUrl(url)
     const openai = new OpenAI({ apiKey })
@@ -41,7 +42,7 @@ H1: ${context.h1||'N/A'}
 Meta: ${context.description||'N/A'}
 Return only JSON.`
     const resp = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      model: bodyModel || process.env.OPENAI_MODEL || 'gpt-4o-mini',
       response_format: { type: 'json_object' },
       messages: [ { role:'system', content: sys }, { role:'user', content: user } ],
       temperature: 0.4

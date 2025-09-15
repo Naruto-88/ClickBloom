@@ -23,6 +23,7 @@ export default function PageClient(){
   const [points, setPoints] = useState<Point[]>([])
   const [scan, setScan] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [queriesLoading, setQueriesLoading] = useState(false)
   const [applied, setApplied] = useState<{ title?: string, seoTitle?: string, description?: string, canonical?: string }|null>(null)
   const [activeTab, setActiveTab] = useState<'title'|'description'|'image'|'schema'>('title')
   const [queries, setQueries] = useState<Array<{ query: string, clicks: number, impressions: number, ctr: number, position: number }>>([])
@@ -134,19 +135,22 @@ export default function PageClient(){
     let start = new Date(range.from); let end = new Date(range.to)
     const y = new Date(); y.setDate(y.getDate()-1)
     if(end>y) end = y
-    const res = await fetch(`/api/google/gsc/page?${qs({ site: siteUrl, page: url, start: fmt(start), end: fmt(end), dimension: 'query', rowLimit: 100 })}`)
-    let data: any = {}
-    if(!res.ok){ const txt = await res.text().catch(()=> ''); console.warn('GSC query fetch error', res.status, txt); setQueries([]); return }
-    try{ data = await res.json() }catch{ const txt = await res.text().catch(()=> ''); console.warn('GSC query non-JSON', txt); data = {} }
-    const rows: any[] = data.rows || []
-    const list = rows.map(r=> ({
-      query: r.keys?.[0] || '',
-      clicks: r.clicks||0,
-      impressions: r.impressions||0,
-      ctr: Math.round((r.ctr||0)*1000)/10,
-      position: Math.round((r.position||0)*10)/10
-    }))
-    setQueries(list)
+    setQueriesLoading(true)
+    try{
+      const res = await fetch(`/api/google/gsc/page?${qs({ site: siteUrl, page: url, start: fmt(start), end: fmt(end), dimension: 'query', rowLimit: 100 })}`)
+      let data: any = {}
+      if(!res.ok){ const txt = await res.text().catch(()=> ''); console.warn('GSC query fetch error', res.status, txt); setQueries([]); return }
+      try{ data = await res.json() }catch{ const txt = await res.text().catch(()=> ''); console.warn('GSC query non-JSON', txt); data = {} }
+      const rows: any[] = data.rows || []
+      const list = rows.map(r=> ({
+        query: r.keys?.[0] || '',
+        clicks: r.clicks||0,
+        impressions: r.impressions||0,
+        ctr: Math.round((r.ctr||0)*1000)/10,
+        position: Math.round((r.position||0)*10)/10
+      }))
+      setQueries(list)
+    } finally { setQueriesLoading(false) }
   }
 
   useEffect(()=>{ loadTrend(); loadQueries() }, [siteUrl, url, range.from, range.to])
@@ -278,6 +282,16 @@ export default function PageClient(){
   const saveAppliedLocal = (next: { title?: string, seoTitle?: string, description?: string, canonical?: string }) => {
     setApplied(next);
     if(siteId) try{ localStorage.setItem(`apply:${siteId}:${url}`, JSON.stringify(next)) }catch{}
+  }
+
+  const getAiConfig = () => {
+    try{
+      if(siteId){
+        const obj = JSON.parse(localStorage.getItem('ai:'+siteId)||'{}')
+        if(obj.openaiKey){ return { apiKey: obj.openaiKey as string, model: (obj.model as string|undefined) } }
+      }
+    }catch{}
+    return null
   }
 
   const verifyOnSite = async (kind: 'title'|'seo'|'desc', expected: string) => {
@@ -513,12 +527,18 @@ export default function PageClient(){
       <div className="page-header">
         <h2 style={{margin:0}}>Page SEO Optimization</h2>
         <div className="breadcrumb">Home - <strong>Page SEO Optimization</strong></div>
-        <div style={{marginLeft:'auto'}}>
+        <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:8}}>
+          {(loading || queriesLoading) && <span className="spinner" title="Loading selected range" aria-label="Loading selected range"/>}
           <RangeDropdown value={range} onChange={setRange}/>
         </div>
       </div>
 
-      <section className="grid" style={{gridTemplateColumns:'repeat(4,1fr)', marginBottom:16}}>
+      <section className="grid" style={{gridTemplateColumns:'repeat(4,1fr)', marginBottom:16, position:'relative'}}>
+        {(loading || queriesLoading) && (
+          <div style={{position:'absolute', inset:0, background:'rgba(15,15,32,0.45)', display:'grid', placeItems:'center', zIndex:1}}>
+            <span className="spinner"/>
+          </div>
+        )}
         <KpiCard title="Clicks" current={sum('clicks')} previous={0} format={(n)=>String(n)} color="#a78bfa" series={points.map(p=>p.clicks)} />
         <KpiCard title="Impressions" current={sum('impressions')} previous={0} format={(n)=>String(n)} color="#22d3ee" series={points.map(p=>p.impressions)} />
         <KpiCard title="CTR" current={points.length? (sum('clicks')/Math.max(1,sum('impressions'))*100):0} previous={0} format={(n)=>`${n.toFixed(1)}%`} color="#fbbf24" series={points.map(p=>p.ctr)} />
@@ -627,7 +647,8 @@ export default function PageClient(){
                 setTitlesBusy(true)
                 const payload: any = { url }
                 const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
                 const out = await res.json()
                 if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate titles') }
               }catch(e:any){ alert(e?.message || 'Failed to generate') }
@@ -636,7 +657,8 @@ export default function PageClient(){
             <button className="btn" style={{display: activeTab==='description'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setMetaBusy(true)
-                const res = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url, keywords: mainKw? [mainKw]: [] }) })
+                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                const res = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
                 const out = await res.json();
                 if(out?.ok){ if(!(keepEdits && metaEdited)) setProposedMeta(out.meta); await applyMeta(out.meta) } else { alert(out?.error||'Generate failed') }
               } finally{ setMetaBusy(false) }
@@ -644,7 +666,8 @@ export default function PageClient(){
             <button className="btn" style={{display: activeTab==='schema'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setSchemaBusy(true)
-                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url, keywords: mainKw? [mainKw]: [] }) })
+                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
                 const out = await r.json(); if(out?.ok){ if(!(keepEdits && schemaEdited)) setProposedSchema(out.schema); await applySchema(out.schema) } else { alert(out?.error||'Generate failed') }
               } finally{ setSchemaBusy(false) }
             }}>{schemaBusy? <span className="spinner"/> : 'Auto Schema Markup Generation'}</button>
@@ -679,7 +702,8 @@ export default function PageClient(){
                   setTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
                   const out = await res.json().catch(()=>null)
                   if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true); setShowPostList(true); setShowMetaList(false) } else { alert(out?.error||'Failed to generate titles') }
                 } finally{ setTitlesBusy(false) }
@@ -690,7 +714,8 @@ export default function PageClient(){
                   setSeoTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
                   const out = await res.json().catch(()=>null)
                   if(out?.ok){ setSeoIdeas(out.ideas||[]); setShowIdeas(true); setShowMetaList(true); setShowPostList(false) } else { alert(out?.error||'Failed to generate SEO titles') }
                 } finally{ setSeoTitlesBusy(false) }
@@ -701,8 +726,8 @@ export default function PageClient(){
                   const kw = (mainKw||'').trim()
                   const payload: any = { url }; if(kw) payload.keywords = [kw]
                   const [r1, r2] = await Promise.all([
-                    fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }),
-                    fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                    (()=>{ const pl:any = {...payload}; const aic=getAiConfig(); if(aic){ pl.apiKey=aic.apiKey; if(aic.model) pl.model=aic.model } return fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(pl) }) })(),
+                    (()=>{ const pl:any = {...payload}; const aic=getAiConfig(); if(aic){ pl.apiKey=aic.apiKey; if(aic.model) pl.model=aic.model } return fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(pl) }) })()
                   ])
                   const [o1, o2] = await Promise.all([r1.json().catch(()=>null), r2.json().catch(()=>null)])
                   if(o1?.ok) setIdeas(o1.ideas||[])
@@ -924,7 +949,8 @@ export default function PageClient(){
               <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center', marginTop:10}}>
                 <input className="input" placeholder="Main keyword (optional)" value={mainKw} onChange={e=>setMainKw(e.target.value)} />
                 <button className="btn" onClick={async()=>{
-                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url, keywords: mainKw? [mainKw]: [] }) })
+                  { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
                   const out = await r.json(); if(out?.ok){ setProposedSchema(out.schema) } else { alert(out?.error||'Generate failed') }
                 }}>Generate JSON-LD</button>
               </div>

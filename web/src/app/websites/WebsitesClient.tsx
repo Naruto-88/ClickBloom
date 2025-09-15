@@ -36,6 +36,8 @@ export default function WebsitesClient(){
   const [credits, setCredits] = useState<string>('')
   const [autoGoogle, setAutoGoogle] = useState<boolean>(()=> (localStorage.getItem('autoConnectGoogle')||'true')==='true')
   const [autoBusy, setAutoBusy] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const [fileKey, setFileKey] = useState<number>(0)
 
   useEffect(()=>{
     const s = loadSites(); setSites(s); const id = localStorage.getItem('activeWebsiteId') || s[0]?.id; setActiveId(id || undefined)
@@ -43,6 +45,12 @@ export default function WebsitesClient(){
 
   const active = useMemo(()=> sites.find(x=>x.id===activeId), [sites, activeId])
   const integ = useMemo(()=> loadIntegrations(activeId), [activeId, integVer])
+  const aiCfg = useMemo(()=>{ try{ return activeId? (JSON.parse(localStorage.getItem('ai:'+activeId)||'{}')) : {} }catch{ return {} } }, [activeId, integVer])
+  const [globalAi, setGlobalAi] = useState<{ hasKey:boolean, model?:string }>({ hasKey:false, model:'' })
+  const [aiBusy, setAiBusy] = useState<'save'|'test'|null>(null)
+  const [aiKeyInput, setAiKeyInput] = useState('')
+  const [aiModelInput, setAiModelInput] = useState('')
+  useEffect(()=>{ (async()=>{ try{ const r=await fetch('/api/settings/ai'); const j=await r.json().catch(()=>null); if(j?.ok){ setGlobalAi({ hasKey:!!j.hasKey, model:j.model||'' }); setAiModelInput(j.model||'') } }catch{} })() }, [])
   useEffect(()=>{ setKeyInput(integ.wpToken||''); if(integ.wpToken){
     // Load remaining credits for display
     fetch('/api/license/validate', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ key: integ.wpToken, site_url: active?.url||'' }) })
@@ -76,6 +84,103 @@ export default function WebsitesClient(){
 
   const addWebsite = (w: Website) => { const next = [...sites, w]; setSites(next); saveSites(next); setActiveId(w.id); setOpenAdd(false); if(autoGoogle){ setTimeout(()=> autoConnectGoogle(w.id).catch(()=>{}), 0) } }
   useEffect(()=>{ if(autoGoogle && activeId){ const integ = loadIntegrations(activeId); if(!(integ.gscSite || integ.ga4Property)) autoConnectGoogle(activeId).catch(()=>{}) } }, [activeId, autoGoogle])
+
+  const parseImportLines = (text: string): Website[] => {
+    const lines = text.split(/\r?\n/).map(l=> l.trim()).filter(Boolean)
+    const out: Website[] = []
+    const makeId = ()=> (typeof crypto!=='undefined' && (crypto as any).randomUUID)? (crypto as any).randomUUID() : String(Date.now()+Math.floor(Math.random()*100000))
+    const ensureUrl = (s:string)=>{ const t=s.trim(); if(!t) return ''; try{ new URL(t); return t }catch{ return 'https://'+t.replace(/^https?:\/\//,'') } }
+    for(const line of lines){
+      const parts = line.split(':')
+      if(parts.length<2) continue
+      const left = parts[0].trim(); const right = parts.slice(1).join(':').trim()
+      const url = ensureUrl(left); const name = right || left
+      if(!url) continue
+      out.push({ id: makeId(), name, url, createdAt: Date.now() })
+    }
+    return out
+  }
+
+  // basic CSV line splitter supporting quoted commas
+  const splitCsvLine = (s: string): string[] => {
+    const out: string[] = []
+    let cur = ''
+    let inQuotes = false
+    for(let i=0;i<s.length;i++){
+      const ch = s[i]
+      if(ch==='"'){
+        if(inQuotes && s[i+1]==='"'){ cur+='"'; i++; continue }
+        inQuotes = !inQuotes; continue
+      }
+      if(ch===',' && !inQuotes){ out.push(cur.trim()); cur=''; continue }
+      cur += ch
+    }
+    out.push(cur.trim())
+    return out
+  }
+
+  const parseImportCsv = (text: string): Website[] => {
+    const rows = text.split(/\r?\n/).map(l=> l.trim()).filter(Boolean)
+    if(rows.length===0) return []
+    const header = splitCsvLine(rows[0]).map(h=> h.toLowerCase())
+    const urlIdx = header.findIndex(h=> h==='url' || h==='website' || h==='site')
+    const nameIdx = header.findIndex(h=> h==='name' || h==='website name')
+    const indIdx = header.findIndex(h=> h==='industry')
+    if(urlIdx<0) return []
+    const makeId = ()=> (typeof crypto!=='undefined' && (crypto as any).randomUUID)? (crypto as any).randomUUID() : String(Date.now()+Math.floor(Math.random()*100000))
+    const ensureUrl = (s:string)=>{ const t=s.trim(); if(!t) return ''; try{ new URL(t); return t }catch{ return 'https://'+t.replace(/^https?:\/\//,'') } }
+    const out: Website[] = []
+    for(let i=1;i<rows.length;i++){
+      const cells = splitCsvLine(rows[i])
+      const raw = (cells[urlIdx]||'').trim(); if(!raw) continue
+      const url = ensureUrl(raw)
+      const name = (nameIdx>=0? (cells[nameIdx]||'').trim(): '') || url
+      const industry = indIdx>=0? (cells[indIdx]||'').trim(): undefined
+      out.push({ id: makeId(), name, url, industry, createdAt: Date.now() })
+    }
+    return out
+  }
+
+  const dedupeMerge = (curr: Website[], add: Website[]): Website[] => {
+    const norm = (u:string)=>{ try{ const x=new URL(u); return x.hostname.replace(/^www\./,'')+x.pathname.replace(/\/$/,''); }catch{ return u.trim().toLowerCase() } }
+    const seen = new Set(curr.map(s=> norm(s.url)))
+    const merged = [...curr]
+    for(const w of add){ const k=norm(w.url); if(!seen.has(k)){ merged.push(w); seen.add(k) } }
+    return merged
+  }
+
+  const onImportFile = async (file: File) => {
+    try{
+      setImportBusy(true)
+      const text = await file.text()
+      const ext = (file.name.split('.').pop()||'').toLowerCase()
+      const list = ext==='csv' ? parseImportCsv(text) : parseImportLines(text)
+      if(list.length===0){
+        alert(ext==='csv'? 'No valid rows found. Expected headers: url,name,industry' : 'No valid lines found. Expected: URL : Website Name')
+        return
+      }
+      const next = dedupeMerge(sites, list)
+      setSites(next); saveSites(next)
+      // Optionally auto-connect first imported site
+      if(autoGoogle){
+        const newly = next.filter(n=> !sites.find(s=> s.id===n.id))
+        setTimeout(()=> newly.slice(0,5).forEach(w=> autoConnectGoogle(w.id).catch(()=>{})), 0)
+      }
+      alert(`Imported ${list.length} site(s). ${next.length - sites.length} added, ${sites.length + list.length - next.length} skipped (duplicates).`)
+    }catch(e:any){ alert(`Import failed: ${e?.message||e}`) }
+    finally{ setImportBusy(false); setFileKey(k=>k+1) }
+  }
+
+  const downloadTxtTemplate = () => {
+    const sample = [
+      'https://example.com : Example Inc',
+      'mysite.com : My Site',
+    ].join('\n')
+    const blob = new Blob([sample], { type:'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'websites_template.txt'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+  }
 
   async function autoConnectGoogle(id: string){
     const site = (sites.find(s=>s.id===id) || loadSites().find(s=>s.id===id)) as Website|undefined
@@ -260,6 +365,11 @@ export default function WebsitesClient(){
           <div style={{display:'flex', gap:8}}>
             <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search" style={{background:'#0f172a', color:'#e5e7eb', border:'1px solid #1f2937', borderRadius:10, padding:'10px 12px'}}/>
             <button className="btn" onClick={()=>setOpenAdd(true)} style={{background:'#6d28d9'}}>+ Add</button>
+            <label className="btn secondary" style={{display:'inline-flex', alignItems:'center', gap:8, cursor:'pointer'}}>
+              {importBusy? 'Importing…' : 'Import .txt/.csv'}
+              <input key={fileKey} type="file" accept=".txt,.csv" style={{display:'none'}} onChange={(e)=>{ const f=e.target.files?.[0]; if(f) onImportFile(f) }} />
+            </label>
+            <button className="btn secondary" onClick={downloadTxtTemplate}>Download .txt template</button>
           </div>
         </div>
         <div style={{border:'1px solid #1f2937', borderRadius:10, overflow:'hidden'}}>
@@ -333,16 +443,37 @@ export default function WebsitesClient(){
               )}
             </div>
           </div>
-          {/* WordPress */}
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
-            <div>
-              <div style={{fontWeight:700}}>WordPress</div>
-              <div className="muted">Securely publish changes to your site.</div>
-            </div>
-            <div style={{display:'flex', alignItems:'center', gap:10}}>
-              {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Verified</span>}
+        {/* WordPress */}
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+          <div>
+            <div style={{fontWeight:700}}>WordPress</div>
+            <div className="muted">Securely publish changes to your site.</div>
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10}}>
+            {(integ.wpEndpoint && integ.wpToken) && <span className="badge" style={{color:'#10b981', borderColor:'#1e3d2f'}}>Verified</span>}
+          </div>
+        </div>
+        {/* AI Provider */}
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>
+          <div>
+            <div style={{fontWeight:700}}>AI Provider (OpenAI)</div>
+            <div className="muted">Use your own API key and model for AI features.</div>
+            <div className="muted" style={{marginTop:4, fontSize:12}}>
+              Global key: {globalAi.hasKey? 'Saved' : 'Not set'}{globalAi.model? ` • Model: ${globalAi.model}`:''}
             </div>
           </div>
+          <div style={{display:'grid', gap:8, minWidth:420}}>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+              <input className="input" placeholder="Global OpenAI API Key (stored securely)" value={aiKeyInput} onChange={(e)=> setAiKeyInput(e.target.value)} />
+              <input className="input" placeholder="Global Model (e.g., gpt-4o-mini)" value={aiModelInput} onChange={(e)=> setAiModelInput(e.target.value)} />
+            </div>
+            <div className="actions" style={{justifyContent:'flex-start', gap:8, margin:0}}>
+              <button className="btn" disabled={aiBusy!==null} onClick={async()=>{ try{ setAiBusy('save'); const body:any={}; if(aiKeyInput) body.openaiKey=aiKeyInput; body.model=aiModelInput; const r=await fetch('/api/settings/ai',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }); const j=await r.json().catch(()=>null); if(j?.ok){ alert('Saved'); setGlobalAi({ hasKey: !!aiKeyInput || globalAi.hasKey, model: aiModelInput }); setAiKeyInput('') } else { alert(j?.error||'Save failed') } } finally { setAiBusy(null) } }}>Save</button>
+              <button className="btn secondary" disabled={aiBusy!==null} onClick={async()=>{ try{ setAiBusy('test'); const r=await fetch('/api/settings/ai/test',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ apiKey: aiKeyInput||undefined, model: aiModelInput||undefined }) }); const j=await r.json().catch(()=>null); if(j?.ok){ alert(`Key OK${j.model? ' • Model '+j.model:''}`) } else { alert(j?.error||'Test failed') } } finally { setAiBusy(null) } }}>Test Key</button>
+            </div>
+            <div className="muted" style={{fontSize:12}}>Tip: Leave the key field empty to keep the existing saved key; only model will update.</div>
+          </div>
+        </div>
           <div className="muted" style={{display:'flex', alignItems:'center', gap:8}}>
             <input type="checkbox" checked={autoGoogle} onChange={(e)=>{ setAutoGoogle(e.target.checked); localStorage.setItem('autoConnectGoogle', String(e.target.checked)) }} />
             Auto-connect Google (GSC & GA4) for new/active sites
