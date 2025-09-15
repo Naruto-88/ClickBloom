@@ -59,6 +59,9 @@ export default function ClientsDashboard(){
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [highlightId, setHighlightId] = useState<string|undefined>()
+  const [showPrev, setShowPrev] = useState(true)
+  const [sortBy, setSortBy] = useState<'worst'|'clicks'|'sessions'|'name'>('worst')
+  const [statusFilter, setStatusFilter] = useState<'all'|'attention'|'red'|'orange'|'green'>('all')
   const presets = useMemo(()=>([
     { key:'7d', label:'7 Days', range: lastNDays(7) },
     { key:'30d', label:'30 Days', range: lastNDays(30) },
@@ -165,15 +168,32 @@ export default function ClientsDashboard(){
   }
 
   const sorted = useMemo(()=>{
-    // Keep highlighted on top
-    const list = [...rows]
-    if(highlightId){
-      list.sort((a,b)=> (a.id===highlightId? -1 : b.id===highlightId? 1 : 0))
-    } else {
-      list.sort((a,b)=> b.gscClicks - a.gscClicks)
+    // filter
+    let list = rows.filter(r=>{
+      if(statusFilter==='all') return true
+      if(statusFilter==='attention') return r.status!=='good'
+      if(statusFilter==='red') return r.status==='bad'
+      if(statusFilter==='orange') return r.status==='warn'
+      if(statusFilter==='green') return r.status==='good'
+      return true
+    })
+    // sort
+    const score = (r:Row)=>{
+      const dClicks = pct(r.gscClicks, r.gscClicksPrev)
+      const dImpr = pct(r.gscImpr, r.gscImprPrev)
+      const dSess = pct(r.ga4Sessions, r.ga4SessionsPrev)
+      const dPos = (r.gscPos - r.gscPosPrev)
+      const severity = r.status==='bad'? 2 : r.status==='warn'? 1 : 0
+      return severity*1000 + Math.max(0,-dClicks) + Math.max(0,-dImpr) + Math.max(0,-dSess) + Math.max(0,dPos)
     }
+    if(sortBy==='worst') list = list.sort((a,b)=> score(b)-score(a))
+    if(sortBy==='clicks') list = list.sort((a,b)=> b.gscClicks - a.gscClicks)
+    if(sortBy==='sessions') list = list.sort((a,b)=> b.ga4Sessions - a.ga4Sessions)
+    if(sortBy==='name') list = list.sort((a,b)=> a.name.localeCompare(b.name))
+    // Keep highlighted on top
+    if(highlightId){ list = list.sort((a,b)=> (a.id===highlightId? -1 : b.id===highlightId? 1 : 0)) }
     return list
-  }, [rows, highlightId])
+  }, [rows, highlightId, sortBy, statusFilter])
 
   return (
     <>
@@ -198,8 +218,33 @@ export default function ClientsDashboard(){
             })}
           </div>
         </div>
-        <div className="muted" style={{fontSize:12}}>
-          {range.from.toLocaleDateString()} – {range.to.toLocaleDateString()} (vs previous period)
+        <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+          <div className="picker" style={{gap:8}}>
+            <span className="muted" style={{fontSize:12}}>Sort</span>
+            <select value={sortBy} onChange={(e)=> setSortBy(e.target.value as any)} style={{background:'transparent', border:0, color:'inherit'}}>
+              <option value="worst">Worst first</option>
+              <option value="clicks">Clicks</option>
+              <option value="sessions">Sessions</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+          <div className="picker" style={{gap:8}}>
+            <span className="muted" style={{fontSize:12}}>Filter</span>
+            <select value={statusFilter} onChange={(e)=> setStatusFilter(e.target.value as any)} style={{background:'transparent', border:0, color:'inherit'}}>
+              <option value="all">All</option>
+              <option value="attention">Attention (Red/Orange)</option>
+              <option value="red">Red</option>
+              <option value="orange">Orange</option>
+              <option value="green">Green</option>
+            </select>
+          </div>
+          <label className="picker" style={{gap:6, cursor:'pointer'}}>
+            <input type="checkbox" checked={!showPrev} onChange={(e)=> setShowPrev(!e.target.checked)} />
+            Compact
+          </label>
+          <div className="muted" style={{fontSize:12}}>
+            {range.from.toLocaleDateString()} – {range.to.toLocaleDateString()} (vs previous period)
+          </div>
         </div>
       </div>
 
@@ -229,12 +274,13 @@ export default function ClientsDashboard(){
         <div className="muted" style={{fontSize:12, marginBottom:8}}>
           Showing {sites.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
         </div>
-        <div style={{display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px', gap:8, alignItems:'center', fontSize:13, padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
+        <div style={{display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px 44px', gap:8, alignItems:'center', fontSize:13, padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
           <div style={{opacity:.8}}>Client</div>
           <div style={{opacity:.8}}>GSC Clicks</div>
           <div style={{opacity:.8}}>GSC Impressions</div>
           <div style={{opacity:.8}}>GSC Avg Pos</div>
           <div style={{opacity:.8}}>GA4 Sessions</div>
+          <div style={{opacity:0}}>Open</div>
         </div>
         {sorted.map(r=>{
           const stColor = r.status==='bad'? '#ef4444' : r.status==='warn'? '#f59e0b' : '#10b981'
@@ -242,7 +288,7 @@ export default function ClientsDashboard(){
           return (
             <div key={r.id}
               style={{
-                display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px', gap:8, alignItems:'center',
+                display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px 44px', gap:8, alignItems:'center',
                 padding:'8px 8px', borderRadius:10, margin:'4px 0', border:'1px dashed #2b2b47',
                 background: isHi? '#121228' : '#0f0f20',
                 outline: isHi? '2px solid var(--accent)' : undefined
@@ -253,22 +299,16 @@ export default function ClientsDashboard(){
                   <div style={{fontWeight:700}}>{r.name}</div>
                   <div className="muted" style={{fontSize:12}}>{r.url}</div>
                 </div>
-                <button
-                  onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; router.push('/dashboard') }}
-                  title="Open client dashboard"
-                  className="btn secondary"
-                  style={{height:28, padding:'0 8px', marginLeft:8}}
-                >↗</button>
               </div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.gscClicks)}</strong>
                 {fmtDelta(r.gscClicks, r.gscClicksPrev)}
-                <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscClicksPrev)}</span>
+                {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscClicksPrev)}</span>}
               </div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.gscImpr)}</strong>
                 {fmtDelta(r.gscImpr, r.gscImprPrev)}
-                <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscImprPrev)}</span>
+                {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.gscImprPrev)}</span>}
               </div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{r.gscPos.toFixed(1)}</strong>
@@ -278,12 +318,23 @@ export default function ClientsDashboard(){
                     {(r.gscPos - r.gscPosPrev).toFixed(1)}
                   </span>
                 </span>
-                <span className="muted" style={{fontSize:11}}>prev {r.gscPosPrev.toFixed(1)}</span>
+                {showPrev && <span className="muted" style={{fontSize:11}}>prev {r.gscPosPrev.toFixed(1)}</span>}
               </div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.ga4Sessions)}</strong>
                 {fmtDelta(r.ga4Sessions, r.ga4SessionsPrev)}
-                <span className="muted" style={{fontSize:11}}>prev {fmt(r.ga4SessionsPrev)}</span>
+                {showPrev && <span className="muted" style={{fontSize:11}}>prev {fmt(r.ga4SessionsPrev)}</span>}
+              </div>
+              <div style={{display:'grid', placeItems:'center'}}>
+                <button
+                  onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; router.push('/dashboard') }}
+                  title="Open client dashboard"
+                  className="icon-btn"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7 17L17 7M17 7H9M17 7V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
               </div>
             </div>
           )
@@ -298,6 +349,8 @@ export default function ClientsDashboard(){
 
       <style jsx global>{`
         @keyframes blink { 50% { opacity: .35 } }
+        .icon-btn{ width:28px; height:28px; display:grid; place-items:center; border-radius:8px; border:1px solid #2b2b47; background:#121228; color: var(--accent); cursor:pointer; }
+        .icon-btn:hover{ filter: brightness(1.1); }
       `}</style>
     </>
   )
