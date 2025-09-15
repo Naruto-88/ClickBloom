@@ -1,6 +1,5 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
 
 type Website = { id: string, name: string, url: string }
 type Integration = { gscSite?: string, ga4Property?: string }
@@ -54,19 +53,10 @@ type Row = {
 }
 
 export default function ClientsDashboard(){
-  const router = useRouter()
   const [range, setRange] = useState<DateRange>(last7Days)
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [highlightId, setHighlightId] = useState<string|undefined>()
-  const presets = useMemo(()=>([
-    { key:'7d', label:'7 Days', range: lastNDays(7) },
-    { key:'30d', label:'30 Days', range: lastNDays(30) },
-    { key:'lastm', label:'Last Month', range: lastMonth() },
-    { key:'6m', label:'Last 6 Months', range: lastNDays(180) },
-    { key:'1y', label:'Last Year', range: lastNDays(365) },
-  ]), [])
-  const [activeKey, setActiveKey] = useState<string>('7d')
 
   const sites = useMemo(()=> loadSites(), [])
 
@@ -180,22 +170,15 @@ export default function ClientsDashboard(){
       <div className="toolbar" style={{marginBottom:12, justifyContent:'space-between'}}>
         <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
           <div className="seg" style={{display:'inline-flex', gap:6, padding:6, border:'1px solid #2b2b47', borderRadius:10, background:'#121228'}}>
-            {presets.map(p => {
-              const active = p.key===activeKey
-              return (
-                <button
-                  key={p.key}
-                  className="btn secondary"
-                  style={{
-                    height:32, padding:'0 10px',
-                    background: active? '#1f1f3a' : 'transparent',
-                    color: active? '#fff' : undefined,
-                    borderColor: active? '#3a3a5d' : undefined
-                  }}
-                  onClick={()=> { setRange(p.range); setActiveKey(p.key) }}
-                >{p.label}</button>
-              )
-            })}
+            {[
+              { key:'7d', label:'7 Days', range: lastNDays(7) },
+              { key:'30d', label:'30 Days', range: lastNDays(30) },
+              { key:'lastm', label:'Last Month', range: lastMonth() },
+              { key:'6m', label:'Last 6 Months', range: lastNDays(180) },
+              { key:'1y', label:'Last Year', range: lastNDays(365) },
+            ].map(p => (
+              <button key={p.key} className="btn secondary" style={{height:32, padding:'0 10px'}} onClick={()=> setRange(p.range)}>{p.label}</button>
+            ))}
           </div>
         </div>
         <div className="muted" style={{fontSize:12}}>
@@ -226,9 +209,7 @@ export default function ClientsDashboard(){
       </div>
 
       <div className="card" style={{padding:12}}>
-        <div className="muted" style={{fontSize:12, marginBottom:8}}>
-          Showing {sites.length} clients • Range: {presets.find(p=>p.key===activeKey)?.label}
-        </div>
+        <div className="muted" style={{fontSize:12, marginBottom:8}}>Showing {sites.length} clients • Default range: Last 7 days</div>
         <div style={{display:'grid', gridTemplateColumns:'220px repeat(3, 1fr) 140px', gap:8, alignItems:'center', fontSize:13, padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
           <div style={{opacity:.8}}>Client</div>
           <div style={{opacity:.8}}>GSC Clicks</div>
@@ -253,12 +234,6 @@ export default function ClientsDashboard(){
                   <div style={{fontWeight:700}}>{r.name}</div>
                   <div className="muted" style={{fontSize:12}}>{r.url}</div>
                 </div>
-                <button
-                  onClick={()=>{ try{ localStorage.setItem('activeWebsiteId', r.id) }catch{}; router.push('/dashboard') }}
-                  title="Open client dashboard"
-                  className="btn secondary"
-                  style={{height:28, padding:'0 8px', marginLeft:8}}
-                >↗</button>
               </div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <strong>{fmt(r.gscClicks)}</strong>
@@ -302,3 +277,4 @@ export default function ClientsDashboard(){
     </>
   )
 }
+
