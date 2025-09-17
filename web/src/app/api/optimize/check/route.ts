@@ -40,9 +40,36 @@ export async function POST(req: Request){
     const $ = load(html)
     const title = $('title').first().text()
     const meta = $('meta[name="description"]').attr('content')
+    // Collect images robustly (handles lazy-load and srcset)
+    const pickFromSrcset = (ss?: string|null) => {
+      if(!ss) return ''
+      try{
+        const parts = String(ss).split(',').map(s=> s.trim()).filter(Boolean)
+        let best = ''; let bestW = 0
+        for(const p of parts){
+          const m = p.match(/\s(\d+)(w|x)$/)
+          const url = p.replace(/\s(\d+)(w|x)$/,'').trim()
+          const w = m? parseInt(m[1],10) : 0
+          if(w>bestW){ bestW=w; best=url }
+          if(!m && !best) best = url // single URL without descriptor
+        }
+        return best || ''
+      }catch{ return '' }
+    }
     const totalImgs = $('img').length
     const images: Array<{ src: string, alt: string|null }> = []
-    let withAlt = 0; $('img').each((_,el)=>{ const alt=$(el).attr('alt')||null; if(alt) withAlt++; const src=$(el).attr('src')||''; images.push({ src, alt }) })
+    let withAlt = 0
+    $('img').each((_,el)=>{
+      const $el = $(el)
+      const alt = ($el.attr('alt')||$el.attr('data-alt')||$el.attr('aria-label')||null); if(alt) withAlt++
+      let src = $el.attr('src')||''
+      const dataSrc = $el.attr('data-src') || $el.attr('data-lazy-src') || $el.attr('data-original') || ''
+      const srcset = $el.attr('srcset') || $el.attr('data-srcset') || ''
+      if(!src && dataSrc) src = dataSrc
+      if((!src || src.startsWith('data:')) && srcset) src = pickFromSrcset(srcset)
+      if(!src || src.startsWith('data:')) return // skip invalid/base64 images
+      images.push({ src, alt })
+    })
     const schemaNodes: string[] = []
     $('script[type="application/ld+json"]').each((_,el)=>{ const t=$(el).text(); if(t) schemaNodes.push(t) })
     const schemaCount = schemaNodes.length

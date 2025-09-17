@@ -1,6 +1,9 @@
 import AuthGuard from "@/components/AuthGuard"
 import { Sidebar } from "@/components/Sidebar"
 import WebsitePicker from "@/components/dashboard/WebsitePicker"
+import dynamic from 'next/dynamic'
+
+const KeywordsClient = dynamic(()=> import('./KeywordsClient'), { ssr: false })
 
 export default async function Keywords(){
   return (
@@ -12,7 +15,7 @@ export default async function Keywords(){
           <div className="page-header">
             <h2 style={{margin:0}}>Keywords</h2>
           </div>
-          <div className="card">Demo keywords table coming soon.</div>
+          <KeywordsClient/>
         </main>
       </div>
     </AuthGuard>

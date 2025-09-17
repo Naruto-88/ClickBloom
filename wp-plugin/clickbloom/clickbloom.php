@@ -632,6 +632,7 @@ add_action('rest_api_init', function(){
       if(isset($req['schema'])){ $schema = is_string($req['schema'])? $req['schema'] : wp_json_encode($req['schema']); update_post_meta($post_id, 'clickbloom_schema', $schema); $changes['schema']='updated'; }
       // Image alts: update attachment meta and attempt to update post content
       if(isset($req['images']) && is_array($req['images'])){
+        $html_only = !empty($req['htmlOnly']) || !empty($req['contentOnly']);
         $content = get_post_field('post_content', $post_id);
         // helper to resolve attachment ID more reliably (CDN/sized URLs)
         $resolve_id = function($src){
@@ -649,31 +650,103 @@ add_action('rest_api_init', function(){
               '%'.$wpdb->esc_like($basename)
             ));
             if($aid) return $aid;
+            // Try again stripping WordPress size suffix like -300x200
+            $basename_core = preg_replace('/-\d+x\d+(?=\.[a-z0-9]+$)/i', '', $basename);
+            if($basename_core && $basename_core !== $basename){
+              $aid = (int)$wpdb->get_var($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+                '%'.$wpdb->esc_like($basename_core)
+              ));
+              if($aid) return $aid;
+            }
           }
           return 0;
         };
+        $image_backup = [];
         foreach($req['images'] as $img){
           $src = isset($img['src']) ? esc_url_raw($img['src']) : '';
           $alt = isset($img['alt']) ? sanitize_text_field($img['alt']) : '';
           if(!$src || !$alt) continue;
+          // normalize to absolute URL when possible and strip query string for matching
+          $src_abs = $src;
+          if(strpos($src, '//') === 0){ $src_abs = (is_ssl() ? 'https:' : 'http:') . $src; }
+          elseif((parse_url($src, PHP_URL_SCHEME) === null || parse_url($src, PHP_URL_SCHEME) === '') && strpos($src, '/') === 0){
+            $src_abs = home_url($src);
+          }
+          $src_noq = preg_replace('/\?.*$/', '', $src);
+          $src_abs_noq = preg_replace('/\?.*$/', '', $src_abs);
           // attachment
-          $aid = $resolve_id($src);
-          if($aid){ update_post_meta($aid, '_wp_attachment_image_alt', $alt); }
+          $aid = $resolve_id($src_abs_noq ?: $src_noq ?: $src);
+          if($aid && !$html_only){
+            if(!isset($image_backup[$aid])){
+              $prev = get_post_meta($aid, '_wp_attachment_image_alt', true);
+              $image_backup[$aid] = $prev;
+            }
+            update_post_meta($aid, '_wp_attachment_image_alt', $alt);
+          }
           // content replace (best-effort)
-          $quoted = preg_quote($src, '~');
+          $quoted = preg_quote($src_abs_noq ?: $src_noq ?: $src, '~');
           // replace existing alt
           $pattern = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*'.$quoted.'[^\"\"]*[\"\"][^>]*\balt=[\"\"])([^\"\"]*)([\"\"])~i';
           $new = '$1'.esc_attr($alt).'$3';
           $count = 0; $content = preg_replace($pattern, $new, $content, 1, $count);
           if($count===0){
             // insert alt if missing
-            $pattern2 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*'.$quoted.'[^\"\"]*[\"\"])([^>]*)(/?>)~i';
-            $new2 = '$1$2 alt="'.esc_attr($alt).'"$3';
-            $content = preg_replace($pattern2, $new2, $content, 1);
+            $pattern2 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*'.$quoted.'[^\"\"]*[\"\"][^>]*)(/?>)~i';
+            $new2 = '$1 alt="'.esc_attr($alt).'"$2';
+            $content = preg_replace($pattern2, $new2, $content, 1, $count);
+          }
+          if($count===0){
+            // Try data-src / data-lazy-src / data-original attributes
+            $pattern3 = '~(<img[^>]*\bdata-(?:src|lazy-src|original)=[\"\"][^\"\"]*'.$quoted.'[^\"\"]*[\"\"][^>]*\balt=[\"\"])([^\"\"]*)([\"\"])~i';
+            $new3 = '$1'.esc_attr($alt).'$3';
+            $content = preg_replace($pattern3, $new3, $content, 1, $count);
+            if($count===0){
+              $pattern4 = '~(<img[^>]*\bdata-(?:src|lazy-src|original)=[\"\"][^\"\"]*'.$quoted.'[^\"\"]*[\"\"][^>]*)(/?>)~i';
+              $new4 = '$1 alt="'.esc_attr($alt).'"$2';
+              $content = preg_replace($pattern4, $new4, $content, 1, $count);
+            }
+          }
+          if($count===0 && $aid){
+            // Match by wp-image-ID class
+            $id = intval($aid);
+            $p5 = '~(<img[^>]*\bwp-image-'.$id.'\b[^>]*\balt=[\"\"])([^\"\"]*)([\"\"])~i';
+            $n5 = '$1'.esc_attr($alt).'$3';
+            $content = preg_replace($p5, $n5, $content, 1, $count);
+            if($count===0){
+              $p6 = '~(<img[^>]*\bwp-image-'.$id.'\b[^>]*)(/?>)~i';
+              $n6 = '$1 alt="'.esc_attr($alt).'"$2';
+              $content = preg_replace($p6, $n6, $content, 1, $count);
+            }
+          }
+          if($count===0){
+            // last-resort: match by basename or basename stem (handles CDN/size/webp variations)
+            $basename = wp_basename(parse_url($src, PHP_URL_PATH));
+            if($basename){
+              $bq = preg_quote($basename, '~');
+              $stem = preg_replace('/\.[a-z0-9]+$/i', '', $basename);
+              $sq = preg_quote($stem, '~');
+              // Replace when alt exists
+              $p3 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*(?:'.$sq.'[^\"\"]*\.(?:jpe?g|png|gif|webp))[^\"\"]*[\"\"][^>]*\balt=[\"\"])([^\"\"]*)(([\"\"]))~i';
+              $n3 = '$1'.esc_attr($alt).'$3';
+              $content = preg_replace($p3, $n3, $content, 1, $count);
+              if($count===0){
+                // Insert alt when missing
+                $p4 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*(?:'.$sq.'[^\"\"]*\.(?:jpe?g|png|gif|webp))[^\"\"]*[\"\"][^>]*)(/?>)~i';
+                $n4 = '$1 alt="'.esc_attr($alt).'"$2';
+                $content = preg_replace($p4, $n4, $content, 1, $count);
+              }
+            }
           }
         }
         wp_update_post([ 'ID'=>$post_id, 'post_content'=>$content ]);
         $changes['images']='updated';
+        if(!empty($image_backup)){
+          $bjson = get_post_meta($post_id, 'clickbloom_backup', true);
+          $b = json_decode($bjson, true); if(!is_array($b)) $b = [];
+          $b['images'] = $image_backup;
+          update_post_meta($post_id, 'clickbloom_backup', wp_json_encode($b));
+        }
       }
       // Detect likely SEO plugin for title
       $engine = 'Unknown';
@@ -774,6 +847,42 @@ add_action('rest_api_init', function(){
       }
       clean_post_cache($post_id);
       if(isset($b['schema'])){ update_post_meta($post_id, 'clickbloom_schema', wp_json_encode($b['schema'])); }
+      // Restore image alts if present in backup
+      if(isset($b['images']) && is_array($b['images']) && count($b['images'])>0){
+        $content = get_post_field('post_content', $post_id);
+        foreach($b['images'] as $aid_str=>$prev_alt){
+          $aid = intval($aid_str);
+          $alt = sanitize_text_field($prev_alt);
+          if($aid>0){ update_post_meta($aid, '_wp_attachment_image_alt', $alt); }
+          // Try to update content by wp-image-ID
+          $count = 0;
+          $p1 = '~(<img[^>]*\bwp-image-'.$aid.'\b[^>]*\balt=[\"\"])([^\"\"]*)([\"\"])~i';
+          $n1 = '$1'.esc_attr($alt).'$3';
+          $content = preg_replace($p1, $n1, $content, 1, $count);
+          if($count===0){
+            $p2 = '~(<img[^>]*\bwp-image-'.$aid.'\b[^>]*)(/?>)~i';
+            $n2 = '$1 alt="'.esc_attr($alt).'"$2';
+            $content = preg_replace($p2, $n2, $content, 1, $count);
+          }
+          if($count===0 && $aid>0){
+            // Fallback by filename basename
+            $file = get_attached_file($aid);
+            if($file){
+              $basename = wp_basename($file);
+              $bq = preg_quote($basename, '~');
+              $p3 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*'.$bq.'[^\"\"]*[\"\"][^>]*\balt=[\"\"])([^\"\"]*)([\"\"])~i';
+              $n3 = '$1'.esc_attr($alt).'$3';
+              $content = preg_replace($p3, $n3, $content, 1, $count);
+              if($count===0){
+                $p4 = '~(<img[^>]*\bsrc=[\"\"][^\"\"]*'.$bq.'[^\"\"]*[\"\"][^>]*)(/?>)~i';
+                $n4 = '$1 alt="'.esc_attr($alt).'"$2';
+                $content = preg_replace($p4, $n4, $content, 1);
+              }
+            }
+          }
+        }
+        wp_update_post([ 'ID'=>$post_id, 'post_content'=>$content ]);
+      }
       clickbloom_log('revert', $b, $post_id);
       return new WP_REST_Response(['ok'=>true], 200);
     },
@@ -800,6 +909,74 @@ add_action('rest_api_init', function(){
           'config' => home_url('/wp-json/clickbloom/v1/config'),
         ],
       ], 200);
+    },
+    'permission_callback' => '__return_true'
+  ]);
+
+  // Resolve alt text for a list of image URLs (used by the app to display existing alts)
+  register_rest_route('clickbloom/v1', '/resolve-alts', [
+    'methods' => 'POST',
+    'callback' => function(WP_REST_Request $req){
+      $opt = clickbloom_get_options(); $token = sanitize_text_field($req['token']);
+      if(!$opt['api_key'] || $token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
+      $body = $req->get_json_params();
+      $images = is_array($body) ? $body : (isset($body['images']) && is_array($body['images']) ? $body['images'] : []);
+      if(!$token && is_array($body) && isset($body['token'])){ $token = sanitize_text_field($body['token']); }
+      if(!$opt['api_key'] || $token !== $opt['api_key']) return new WP_REST_Response(['ok'=>false,'error'=>'Unauthorized'], 401);
+      // Helper: resolve attachment id from URL, handling CDN/size suffix
+      $resolve_id = function($src){
+        $aid = attachment_url_to_postid($src); if($aid) return $aid;
+        global $wpdb;
+        // GUID match
+        $aid = (int)$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type='attachment' AND guid=%s LIMIT 1", $src));
+        if($aid) return $aid;
+        $path = parse_url($src, PHP_URL_PATH);
+        $basename = $path ? wp_basename($path) : '';
+        if($basename){
+          $aid = (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+            '%'.$wpdb->esc_like($basename)
+          ));
+          if($aid) return $aid;
+          // Strip -300x200 style suffix
+          $basename_core = preg_replace('/-\d+x\d+(?=\.[a-z0-9]+$)/i', '', $basename);
+          if($basename_core && $basename_core !== $basename){
+            $aid = (int)$wpdb->get_var($wpdb->prepare(
+              "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+              '%'.$wpdb->esc_like($basename_core)
+            ));
+            if($aid) return $aid;
+          }
+          // Try fuzzy match by stem (works when WebP or different extension)
+          $stem = preg_replace('/\.[a-z0-9]+$/i', '', $basename_core ?: $basename);
+          if($stem){
+            $aid = (int)$wpdb->get_var($wpdb->prepare(
+              "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+              '%'.$wpdb->esc_like($stem).'%'
+            ));
+            if($aid) return $aid;
+          }
+        }
+        return 0;
+      };
+      $out = [];
+      foreach($images as $src){
+        if(!is_string($src) || $src==='') continue;
+        // Normalize URL and strip query
+        $src_abs = $src;
+        if(strpos($src, '//')===0){ $src_abs = (is_ssl()? 'https:' : 'http:').$src; }
+        elseif((parse_url($src, PHP_URL_SCHEME) === null || parse_url($src, PHP_URL_SCHEME) === '') && strpos($src, '/')===0){
+          $src_abs = home_url($src);
+        }
+        $src_abs_noq = preg_replace('/\?.*$/', '', $src_abs);
+        $aid = $resolve_id($src_abs_noq ?: $src_abs);
+        if($aid){
+          $alt = get_post_meta($aid, '_wp_attachment_image_alt', true);
+          if(!$alt){ $alt = get_post_field('post_excerpt', $aid) ?: get_post_field('post_title', $aid); }
+          if($alt){ $out[$src] = $alt; }
+        }
+      }
+      return new WP_REST_Response(['ok'=>true, 'alts'=>$out], 200);
     },
     'permission_callback' => '__return_true'
   ]);
@@ -920,6 +1097,14 @@ add_filter('wpseo_canonical', function($url){
   $custom = get_post_meta($post->ID, 'clickbloom_canonical', true);
   return $custom ? $custom : $url;
 }, 99);
+
+// Ensure rendered <img> tags use the attachment ALT (helps WPBakery/shortcodes)
+add_filter('wp_get_attachment_image_attributes', function($attr, $attachment){
+  if(is_admin()) return $attr;
+  $alt = get_post_meta($attachment->ID, '_wp_attachment_image_alt', true);
+  if(!empty($alt)) $attr['alt'] = $alt; // force attachment ALT
+  return $attr;
+}, 99, 2);
 
 // Fallback document title if NO SEO plugin is active
 add_filter('document_title_parts', function($parts){

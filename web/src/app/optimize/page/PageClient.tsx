@@ -61,6 +61,7 @@ export default function PageClient(){
   const [imgVariant, setImgVariant] = useState<Record<string, number>>({})
   const [bulkBusy, setBulkBusy] = useState<'gen'|'apply'|'genapply'|null>(null)
   const [bulkKw, setBulkKw] = useState("")
+  const [htmlOnly, setHtmlOnly] = useState(false)
   const [pageBusy, setPageBusy] = useState(false)
   const [wpPostId, setWpPostId] = useState<string>("")
   const [integrationsChanged, setIntegrationsChanged] = useState(0)
@@ -71,6 +72,8 @@ export default function PageClient(){
   const [crawlList, setCrawlList] = useState<any[]>([])
   const [crawlQuery, setCrawlQuery] = useState('')
   const [verifyStatus, setVerifyStatus] = useState<{ title?: { ok: boolean, engine?: string }, seo?: { ok: boolean, engine?: string }, desc?: { ok: boolean, engine?: string } }>({})
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
 
   const siteUrl = gscSiteUrl(siteId)
   const fmt = (d:Date)=> d.toISOString().slice(0,10)
@@ -130,6 +133,21 @@ export default function PageClient(){
     const out = await res.json(); setScan(out?.data || null)
   }
 
+  // Enrich image alts from WordPress when missing in the HTML
+  const enrichImageAltsFromWP = async ()=>{
+    try{
+      const cfg = getWpConfig(); if(!cfg) return
+      const imgs: string[] = (scan?.details?.images||[])
+        .map((im:any)=>{ const raw=(im.src||''); return raw.startsWith('http')? raw : (raw? new URL(raw, url).toString(): '') })
+        .filter(Boolean)
+      if(imgs.length===0) return
+      const r = await fetch('/api/optimize/read-image-alts', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, images: imgs }) })
+      const j = await r.json().catch(()=>null); if(!j?.ok) return
+      const map: Record<string,string> = j.alts||{}
+      setImgAlts(prev=> ({...map, ...prev}))
+    }catch{}
+  }
+
   const loadQueries = async ()=>{
     if(!siteUrl || !url) return
     let start = new Date(range.from); let end = new Date(range.to)
@@ -155,6 +173,36 @@ export default function PageClient(){
 
   useEffect(()=>{ loadTrend(); loadQueries() }, [siteUrl, url, range.from, range.to])
   useEffect(()=>{ runScan() }, [url])
+  useEffect(()=>{ if(scan?.details?.images?.length){ enrichImageAltsFromWP() } }, [scan?.details?.images?.length, siteId])
+
+  const revertImages = async () => {
+    try{
+      const cfg = getWpConfig(); if(!cfg){ alert('Add WordPress endpoint + key'); return }
+      setBulkBusy('apply')
+      const res = await fetch('/api/optimize/revert', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, postId: (Number(wpPostId)>0? Number(wpPostId): undefined), only: 'images' }) })
+      const out = await res.json().catch(()=>null)
+      if(!out?.ok){ showToast(out?.error||'Revert failed','err') }
+      else{
+        setImgApplied({})
+        showToast('Reverted image alts','ok')
+        await runScan(); await enrichImageAltsFromWP()
+      }
+    }finally{ setBulkBusy(null) }
+  }
+
+  const openAltPreview = async () => {
+    try{
+      setPreviewOpen(true); setPreviewHtml('')
+      const alts: Record<string,string> = {}
+      ;(scan?.details?.images||[]).forEach((im:any)=>{
+        const raw = im.src||''; const abs = raw.startsWith('http')? raw : (raw? new URL(raw, url).toString(): '')
+        const a = imgAlts[abs]||im.alt||''; if(abs && a) alts[abs]=a
+      })
+      const r = await fetch('/api/optimize/preview', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url, alts }) })
+      const j = await r.json().catch(()=>null)
+      if(j?.ok && j.html){ setPreviewHtml(j.html) } else { setPreviewHtml('<p style="color:#fca5a5">Could not build preview.</p>') }
+    }catch{ setPreviewHtml('<p style="color:#fca5a5">Preview failed.</p>') }
+  }
   useEffect(()=>{ if(siteId && url){ const a = localStorage.getItem(`apply:${siteId}:${url}`); if(a) setApplied(JSON.parse(a)) } }, [siteId, url])
 
   // live Apply/Revert implemented later in file
@@ -401,9 +449,9 @@ export default function PageClient(){
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, schema, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
     const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else { showToast('Applied to live site','ok') }
   }
-  const applyImages = async (pairs: Array<{src:string, alt:string}>, markApplied: boolean = true) => {
+  const applyImages = async (pairs: Array<{src:string, alt:string}>, markApplied: boolean = true, htmlOnlyFlag?: boolean) => {
     const cfg = getWpConfig(); if(!cfg){ alert('Add WordPress endpoint + key'); return }
-    const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, images: pairs, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
+    const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, images: pairs, postId: (Number(wpPostId)>0? Number(wpPostId): undefined), htmlOnly: !!htmlOnlyFlag }) })
     const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else {
       setImgApplied(prev => { const next = { ...prev }; for(const p of pairs){ next[p.src] = markApplied } return next })
       showToast('Image alts updated','ok')
@@ -865,13 +913,13 @@ export default function PageClient(){
             <div style={{marginTop:12}}>
               <div className="alt-list">
                 {(scan?.details?.images||[]).map((im:any, idx:number)=>{
-                  const src = (im.src||''); const abs = src.startsWith('http')? src : (new URL(src, url).toString())
+                  const srcRaw = (im.src||''); const abs = srcRaw.startsWith('http')? srcRaw : (srcRaw? new URL(srcRaw, url).toString(): '')
                   const prop = imgAlts[abs]||im.alt||''
                   const kw = imgKw[abs]||''
                   return (
                     <div key={idx} className="alt-row" style={{gridTemplateColumns:'80px 1fr 220px auto'}}>
-                      <div className="alt-thumb" onClick={()=> window.open(abs, '_blank')} title="Open original">
-                        <img src={abs} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                      <div className="alt-thumb" onClick={()=>{ if(abs) window.open(abs, '_blank') }} title="Open original">
+                        {abs ? <img src={abs} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <div className="muted" style={{fontSize:12}}>No preview</div>}
                         <div className="hover">Open</div>
                       </div>
                       <input className="input" value={prop} onChange={e=> setImgAlts(prev=> ({...prev, [abs]: e.target.value})) } />
@@ -887,16 +935,27 @@ export default function PageClient(){
                                 if(alt) setImgAlts(prev=> ({...prev, [abs]: alt }))
                                 else alert('Could not generate variation. Try again or use a focus keyword.')
                               }finally{ setImgBusy(prev=> ({...prev, [abs]: false})) }
-                            }}>🤖</button>
-                            <button className="icon-btn" title="Open" onClick={()=> window.open(abs, '_blank')}>🌐</button>
+                            }}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l1.9 3.8L18 7l-4 2 1.2 4L12 10.8 8.8 13 10 9 6 7l4.1-1.2L12 2z"/></svg>
+                            </button>
+                            <button className="icon-btn" title="Open" onClick={()=> window.open(abs, '_blank')}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path d="M5 5h7v2H7v10h10v-5h2v7H5z"/></svg>
+                            </button>
+                            <button className="icon-btn" title="Apply (HTML only)" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true, true)}>
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                            </button>
                             {!imgApplied[abs] && (
-                              <button className="icon-btn" title="Apply" onClick={()=> applyImages([{ src: abs, alt: imgAlts[abs]||im.alt||'' }], true)}>✔</button>
+                              <button className="icon-btn" title="Apply" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true)}>
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                              </button>
                             )}
                             {imgApplied[abs] && (
                               <button className="icon-btn" title="Revert to original" onClick={async()=>{
-                                await applyImages([{ src: abs, alt: im.alt||'' }], false);
+                                await applyImages([{ src: (srcRaw||abs), alt: im.alt||'' }], false);
                                 setImgAlts(prev=> ({...prev, [abs]: im.alt||'' }))
-                              }}>↩</button>
+                              }}>
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.1-.9 2-2 2h-2v2h2c2.76 0 5-2.24 5-5 0-4.42-3.58-8-8-8z"/></svg>
+                              </button>
                             )}
                           </>
                         )}
@@ -907,9 +966,12 @@ export default function PageClient(){
               </div>
               <div className="actions" style={{marginTop:10, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
                 <input className="input" placeholder="Focus KW for all (optional)" style={{maxWidth:260}} value={bulkKw} onChange={e=>setBulkKw(e.target.value)} />
+                <label className="muted" style={{display:'flex', alignItems:'center', gap:6}}>
+                  <input type="checkbox" checked={htmlOnly} onChange={e=> setHtmlOnly(e.target.checked)} /> HTML-only
+                </label>
                 <button className="btn secondary" disabled={bulkBusy!==null} onClick={async()=>{
                   setBulkBusy('gen')
-                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : new URL(im.src||'', url).toString())
+                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''))
                   // mark all rows busy
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=true); return next })
                   const kw = bulkKw || mainKw
@@ -920,22 +982,24 @@ export default function PageClient(){
                 }}>{bulkBusy==='gen'? <span className="spinner"/> : 'Generate All'}</button>
                 <button className="btn" disabled={bulkBusy!==null} onClick={()=>{
                   setBulkBusy('apply')
-                  const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs = (im.src||'').startsWith('http')? im.src : new URL(im.src||'', url).toString(); return { src: abs, alt: imgAlts[abs]||im.alt||'' } })
-                  applyImages(pairs, true).finally(()=> setBulkBusy(null))
+                  const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''); return { src: (im.src||abs0), alt: imgAlts[abs0]||im.alt||'' } })
+                  applyImages(pairs, true, htmlOnly).finally(()=> setBulkBusy(null))
                 }}>{bulkBusy==='apply'? <span className="spinner"/> : 'Apply All'}</button>
+                <button className="btn secondary" disabled={bulkBusy!==null} onClick={revertImages}>{bulkBusy==='apply'? <span className="spinner"/> : 'Revert Images'}</button>
                 <button className="btn" disabled={bulkBusy!==null} onClick={async()=>{
                   setBulkBusy('genapply')
-                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : new URL(im.src||'', url).toString())
+                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''))
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=true); return next })
                   const kw = bulkKw || mainKw
                   const r = await fetch('/api/ai/image-alt', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ images: imgs, keywords: kw? [kw]: [] }) })
                   const out = await r.json(); if(out?.ok){ setImgAlts(out.alts||{})
-                    const pairs = imgs.map((abs:string)=> ({ src: abs, alt: out.alts?.[abs]||'' }))
-                    await applyImages(pairs, true)
+                    const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''); return { src: (im.src||abs0), alt: out.alts?.[abs0]||'' } })
+                    await applyImages(pairs, true, htmlOnly)
                   } else { alert(out?.error||'Generate failed') }
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=false); return next })
                   setBulkBusy(null)
                 }}>{bulkBusy==='genapply'? <span className="spinner"/> : 'Generate + Apply All'}</button>
+                <button className="btn secondary" onClick={openAltPreview} disabled={bulkBusy!==null}>Preview With Alts</button>
               </div>
             </div>
           )}
@@ -1013,6 +1077,12 @@ export default function PageClient(){
           <button className="btn" onClick={saveQuickConnect} disabled={qcBusy!==null}>{qcBusy==='save'? <span className="spinner"/> : 'Save'}</button>
         </div>
       </Modal>
+      <Modal open={previewOpen} onClose={()=>setPreviewOpen(false)}>
+        <h3>Preview With Alts</h3>
+        <div style={{height:'70vh', border:'1px solid #2b2b47', borderRadius:10, overflow:'hidden'}}>
+          <iframe style={{width:'100%', height:'100%', background:'#0b0b16', border:0}} srcDoc={previewHtml||'<div style="padding:12px;color:#cfd2e6">Building preview…</div>'} />
+        </div>
+      </Modal>
     </>
   )
 }
@@ -1041,4 +1111,6 @@ function Donut({ value }: { value: number }){
     </div>
   )
 }
+
+
 
