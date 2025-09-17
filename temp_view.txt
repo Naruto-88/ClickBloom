@@ -1,0 +1,171 @@
+"use client"
+import { useEffect, useMemo, useState } from 'react'
+
+type Kw = {
+  id: string
+  query: string
+  targetUrl?: string
+  targetDomain?: string
+  notes?: string
+  history: Array<{ date: string, position: number|null }>
+}
+
+function activeSite(){ try{ return localStorage.getItem('activeWebsiteId')||'' }catch{ return '' } }
+const today = ()=> new Date().toISOString().slice(0,10)
+
+export default function KeywordsClient(){
+  const [siteId, setSiteId] = useState('')
+  const [list, setList] = useState<Kw[]>([])
+  const [q, setQ] = useState('')
+  const [target, setTarget] = useState('')
+  const [domain, setDomain] = useState('')
+  const [busy, setBusy] = useState<'check'|'add'|null>(null)
+  const [search, setSearch] = useState('')
+  const [serpProvider, setSerpProvider] = useState<'serper'|'serpapi'>('serper')
+  const [serpHasKey, setSerpHasKey] = useState<boolean>(false)
+  const [serpKey, setSerpKey] = useState('')
+  const getSiteDomain = ()=>{
+    try{
+      if(!siteId) return ''
+      const integ = JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}')
+      const g = integ.gscSite as string|undefined
+      if(g){ try{ const u = new URL(g); return u.hostname.replace(/^www\./,'') }catch{} }
+    }catch{}
+    return ''
+  }
+
+  useEffect(()=>{ setSiteId(activeSite()) }, [])
+  // Refresh siteId when WebsitePicker selection changes
+  useEffect(()=>{
+    let mounted = true
+    let last = activeSite()
+    const tick = ()=>{
+      const cur = activeSite()
+      if(mounted && cur !== last){ last = cur; setSiteId(cur) }
+    }
+    const id = setInterval(tick, 800)
+    window.addEventListener('focus', tick)
+    return ()=>{ mounted=false; clearInterval(id); window.removeEventListener('focus', tick) }
+  }, [])
+  useEffect(()=>{ (async()=>{ const r=await fetch('/api/settings/serp-global'); const j=await r.json().catch(()=>null); if(j?.ok){ setSerpProvider(j.provider||'serper'); setSerpHasKey(!!j.hasKey) } })() }, [])
+  useEffect(()=>{ (async()=>{
+    if(!siteId) return
+    const r = await fetch(`/api/keywords?siteId=${encodeURIComponent(siteId)}`)
+    const j = await r.json().catch(()=>null)
+    if(j?.ok) setList(Array.isArray(j.data)? j.data: [])
+  })() }, [siteId])
+  const save = (next:Kw[])=>{ setList(next) }
+
+  const add = async ()=>{
+    if(!q.trim() || !siteId) return
+    const dom = (domain.trim()||getSiteDomain()||'')
+    const r = await fetch('/api/keywords', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId, query:q.trim(), targetUrl: target.trim()||undefined, targetDomain: dom||undefined }) })
+    const j = await r.json().catch(()=>null)
+    if(j?.ok && j.data){ setList([j.data, ...list]); setQ(''); setTarget(''); setDomain('') }
+  }
+  const remove = async (id:string)=>{
+    await fetch(`/api/keywords/${id}?siteId=${encodeURIComponent(siteId)}`, { method:'DELETE' })
+    setList(list.filter(x=> x.id!==id))
+  }
+  const setManual = async (id:string, pos:number|null, date?:string)=>{
+    const d = (date && date.trim()) || today()
+    await fetch(`/api/keywords/${id}/position`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId, position: pos, source:'manual', date: d }) })
+    const next = list.map(k=> k.id===id? { ...k, history: upsertForDate(k.history, d, pos) } : k)
+    save(next)
+  }
+  const upsertForDate = (h:Array<{date:string, position:number|null}>, d:string, pos:number|null)=>{
+    const i = h.findIndex(x=> x.date===d); if(i>=0){ const c=[...h]; c[i]={date:d, position:pos}; return c } return [{date:d, position:pos}, ...h].slice(0,120)
+  }
+  const checkOne = async (k:Kw)=>{
+    setBusy('check')
+    try{
+      const r = await fetch('/api/keywords/check', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ q: k.query, targetUrl: k.targetUrl, targetDomain: k.targetDomain, country:'au', lang:'en' }) })
+      const j = await r.json(); if(!j?.ok){ alert(j?.error||'check failed'); return }
+      const pos: number|null = j.data?.position ?? null
+      await fetch(`/api/keywords/${k.id}/position`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ siteId, position: pos, source:'api', provider:j.data?.provider, foundUrl:j.data?.foundUrl }) })
+      const next = list.map(x=> x.id===k.id? { ...x, history: upsertForDate(x.history, today(), pos) } : x)
+      save(next)
+    }finally{ setBusy(null) }
+  }
+  const checkAll = async ()=>{ for(const k of list){ await checkOne(k) } }
+
+  const rows = useMemo(()=>{
+    const fil = (search||'').toLowerCase()
+    const out = (!fil? list : list.filter(x=> x.query.toLowerCase().includes(fil)))
+    return out.map(k=>{
+      const todayPos = k.history.find(h=> h.date===today())?.position ?? null
+      const prevPos = k.history.filter(h=> h.position!==null)[1]?.position ?? null
+      const delta = (todayPos!==null && prevPos!==null)? prevPos - todayPos : null // positive = improved
+      const hue = todayPos===null? 230 : (todayPos<=10? 140 : todayPos<=30? 50 : 0)
+      const color = todayPos===null? '#94a3b8' : (hue===140? '#34d399' : hue===50? '#f59e0b' : '#ef4444')
+      return { k, todayPos, prevPos, delta, color }
+    })
+  }, [list, search])
+
+  const fmtDMY = (d:string)=>{ try{ const [Y,M,D] = d.split('-'); return `${D}/${M}/${Y}` }catch{ return d } }
+  const parseDMY = (s:string)=>{ const m = s.match(/^(\d{1,2})[\/](\d{1,2})[\/-](\d{4})$/); if(!m) return today(); const D=m[1].padStart(2,'0'); const M=m[2].padStart(2,'0'); const Y=m[3]; return `${Y}-${M}-${D}` }
+
+  return (
+    <div className="card">
+      <div className="panel-title" style={{display:'grid', gridTemplateColumns:'auto 1fr auto', gap:8, alignItems:'center'}}>
+        <div><strong>Keyword Tracker</strong><div className="muted">Google Australia (gl=au)</div></div>
+        <div style={{display:'flex', gap:8, alignItems:'center', justifyContent:'flex-end', flexWrap:'wrap'}}>
+          <select className="input" value={serpProvider} onChange={e=> setSerpProvider(e.target.value as any)} style={{height:38, maxWidth:160}}>
+            <option value="serper">Serper.dev</option>
+            <option value="serpapi">SerpAPI</option>
+          </select>
+          <input className="input" placeholder={serpHasKey? 'Key stored — enter to replace' : 'API Key'} value={serpKey} onChange={e=> setSerpKey(e.target.value)} style={{maxWidth:260}} />
+          <button className="btn secondary" onClick={async()=>{ if(!serpProvider || !serpKey.trim()){ alert('Enter provider + API key'); return } const r=await fetch('/api/settings/serp-global', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ provider: serpProvider, apiKey: serpKey.trim() }) }); const j=await r.json(); if(j?.ok){ setSerpHasKey(true); setSerpKey('') } else { alert(j?.error||'Save failed') } }}>Save</button>
+          <button className="btn secondary" onClick={async()=>{ await fetch('/api/settings/serp-global', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ clear:true }) }); setSerpHasKey(false); setSerpKey('') }}>Clear</button>
+        </div>
+        <div style={{display:'flex', gap:8, alignItems:'center', justifyContent:'flex-end'}}>
+          <input className="input" placeholder="Filter keywords" value={search} onChange={e=>setSearch(e.target.value)} style={{width:200}}/>
+          <button className="btn secondary" onClick={checkAll} disabled={busy==='check' || list.length===0}>{busy==='check'? <span className="spinner"/> : 'Check All'}</button>
+        </div>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 120px 120px 160px auto', gap:8, alignItems:'center'}}>
+        <input className="input" placeholder="Add keyword" value={q} onChange={e=>setQ(e.target.value)} />
+        <input className="input" placeholder="Target URL (optional)" value={target} onChange={e=>setTarget(e.target.value)} />
+        <input className="input" placeholder={`Domain (optional) ${getSiteDomain()? '· '+getSiteDomain():''}`} value={domain} onChange={e=>setDomain(e.target.value)} />
+        <div className="muted">&nbsp;</div>
+        <div className="muted">&nbsp;</div>
+        <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+          <button className="btn" onClick={add} disabled={!q.trim() || busy==='add'}>Add</button>
+        </div>
+      </div>
+
+      <div className="q-list" style={{marginTop:12}}>
+        {rows.map(({k, todayPos, delta, color})=> {
+          const defaultDate = today()
+          return (
+          <div key={k.id} className="q-row kw-row">
+            <div className="q-name" title={k.query}>{k.query}</div>
+            <div className="muted" title={k.targetUrl||k.targetDomain||''} style={{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{k.targetUrl||k.targetDomain||'—'}</div>
+            <div className="kw-actions">
+              <span className="q-metric" style={{borderColor:'#2b2b47', color:'#e6e6f0', background:'#10102a'}} title="Today position">{todayPos===null? '—' : `#${todayPos}`}</span>
+              <span className="q-metric" style={{borderColor:'#2b2b47', color: color, background:'#0f0f20'}} title="Change vs previous">{delta===null? '±0' : (delta>0? `+${delta}` : `${delta}`)}</span>
+              <button className="btn secondary" style={{height:32}} onClick={()=>checkOne(k)} disabled={busy==='check'}>{busy==='check'? <span className="spinner"/> : 'Check'}</button>
+              <input className="input" style={{width:70, height:32}} placeholder="#" title="Position" defaultValue={todayPos??''} id={`pos-${k.id}`} />
+              <input className="input" style={{width:120, height:32}} placeholder={fmtDMY(defaultDate)} defaultValue={fmtDMY(defaultDate)} id={`date-${k.id}`} />
+              <button className="btn secondary" style={{height:32}} onClick={()=>{
+                const posEl = document.getElementById(`pos-${k.id}`) as HTMLInputElement|null
+                const dateEl = document.getElementById(`date-${k.id}`) as HTMLInputElement|null
+                const raw = posEl?.value||''
+                const n = raw.trim()===''? null : Math.max(1, Math.min(100, parseInt(raw,10)||1))
+                const dIn = dateEl?.value||fmtDMY(defaultDate)
+                const d = parseDMY(dIn)
+                setManual(k.id, n, d)
+              }}>Set</button>
+              <button className="btn secondary" style={{height:32}} onClick={()=> remove(k.id)}>Delete</button>
+            </div>
+          </div>
+        )})}
+        {rows.length===0 && <div className="muted">No keywords yet.</div>}
+      </div>
+
+      <div className="muted" style={{marginTop:8, fontSize:12}}>Tip: Save a Serper.dev or SerpAPI key above to enable live checks (AU). Otherwise track manually. You can set any date to record where a keyword was on that day.</div>
+    </div>
+  )
+}
+

@@ -13,7 +13,7 @@ export default async function Keywords(){
         <main className="content">
           <div className="page-topbar"><WebsitePicker/></div>
           <div className="page-header">
-            <h2 style={{margin:0}}>Keywords</h2>
+            <h2 style={{margin:0, display:'flex', alignItems:'center', gap:8}}>Keywords Tracker <span className="badge" style={{background:'#3b2b68', borderColor:'#4b3b78'}}>BETA</span></h2>
           </div>
           <KeywordsClient/>
         </main>

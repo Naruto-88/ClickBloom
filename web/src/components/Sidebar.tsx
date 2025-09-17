@@ -6,7 +6,7 @@ const items = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/performance", label: "Performance" },
   { href: "/optimize", label: "Optimize" },
-  { href: "/keywords", label: "Keywords" },
+  { href: "/keywords", label: "Keywords Tracker" },
   { href: "/audit", label: "Site Audit" },
   { href: "/reports", label: "Reports" },
   { href: "/clients", label: "Clients" },

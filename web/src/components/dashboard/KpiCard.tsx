@@ -14,9 +14,17 @@ type Props = {
 export default function KpiCard({ title, current, previous, format, color, invert=false, series=[] }: Props){
   const canvas = useRef<HTMLCanvasElement>(null)
 
-  const rawDelta = previous === 0 ? 0 : ((current - previous) / previous) * 100
+  // Robust delta calculation
+  let rawDelta: number
+  if (previous === 0) {
+    // If there was no previous value, treat any positive current as full improvement
+    rawDelta = current > 0 ? 100 : 0
+  } else {
+    rawDelta = ((current - previous) / previous) * 100
+  }
   const delta = invert ? -rawDelta : rawDelta
-  const up = delta >= 0
+  // Only mark as up when strictly positive; 0 is neutral/non-up
+  const up = delta > 0
 
   useEffect(()=>{
     if(!canvas.current || !series?.length) return
@@ -50,7 +58,9 @@ export default function KpiCard({ title, current, previous, format, color, inver
       <div>
         <div style={{display:'flex', alignItems:'center', gap:8}}>
           <div className="value">{format(current)}</div>
-          <div className={`trend ${up? '' : 'down'}`}>{delta>0? `+${delta.toFixed(1)}%` : `${delta.toFixed(1)}%`}</div>
+          <div className={`trend ${up? '' : 'down'}`}>
+            {delta>0? `+${delta.toFixed(1)}%` : `${delta.toFixed(1)}%`}
+          </div>
         </div>
         <div className="muted" style={{marginTop:4}}>{title}</div>
         <div style={{display:'grid', gridTemplateColumns:'110px 1fr', alignItems:'center', gap:8, marginTop:10}}>
