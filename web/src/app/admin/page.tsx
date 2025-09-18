@@ -1,10 +1,10 @@
 import AdminGuard from "@/components/AdminGuard"
 import { Sidebar } from "@/components/Sidebar"
-import LicensesClient from "./LicensesClient"
+import AdminDashboardClient from "./AdminDashboardClient"
 
 export const dynamic = 'force-dynamic'
 
-export default async function LicensesPage(){
+export default async function AdminPage(){
   return (
     <AdminGuard>
       <div className="layout">
@@ -12,10 +12,10 @@ export default async function LicensesPage(){
         <main className="content">
           <div className="page-topbar">
             <div className="page-header" style={{marginBottom:0}}>
-              <h2 style={{margin:0}}>Licenses</h2>
+              <h2 style={{margin:0}}>Administration</h2>
             </div>
           </div>
-          <LicensesClient/>
+          <AdminDashboardClient/>
         </main>
       </div>
     </AdminGuard>
