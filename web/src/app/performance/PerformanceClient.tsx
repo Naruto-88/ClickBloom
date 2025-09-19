@@ -19,7 +19,8 @@ const fmtNum = (n:number)=> n>=1000? (n/1000).toFixed(1)+'K' : String(n)
 
 export default function PerformanceClient(){
   const [siteId, setSiteId] = useState<string|undefined>(undefined)
-  const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-29); return { from:s,to:y } })
+  const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setHours(0,0,0,0); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-29); s.setHours(0,0,0,0); return { from:s,to:y } })
+  const [activePreset, setActivePreset] = useState<'7d'|'30d'|'lastm'|'3m'|'6m'|'1y'|'custom'>('30d')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<Record<string, any>>({})
   const [gscRangeBySite, setGscRangeBySite] = useState<Record<string, DateRange>>({})
@@ -46,8 +47,64 @@ export default function PerformanceClient(){
 
   const fmtDate = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
+  const yesterday = () => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-1); return d }
+  const buildDaysRange = (days: number): DateRange => { const end = yesterday(); const start = new Date(end); start.setDate(start.getDate()-(days-1)); return { from: start, to: end } }
+  const buildLastMonthRange = (): DateRange => { const end = yesterday(); const from = new Date(end.getFullYear(), end.getMonth()-1, 1); const to = new Date(end.getFullYear(), end.getMonth(), 0); to.setHours(0,0,0,0); return { from, to } }
+  const presetMap: Record<'7d'|'30d'|'lastm'|'3m'|'6m'|'1y', () => DateRange> = {
+    '7d': () => buildDaysRange(7),
+    '30d': () => buildDaysRange(30),
+    'lastm': () => buildLastMonthRange(),
+    '3m': () => buildDaysRange(90),
+    '6m': () => buildDaysRange(180),
+    '1y': () => buildDaysRange(365),
+  }
+  const presetOptions = [
+    { key:'7d', label:'7 Days' },
+    { key:'30d', label:'30 Days' },
+    { key:'lastm', label:'Last Month' },
+    { key:'3m', label:'Last 3 Months' },
+    { key:'6m', label:'Last 6 Months' },
+    { key:'1y', label:'Last Year' },
+  ] as const
+  const rangeToKey = (value: DateRange): '7d'|'30d'|'lastm'|'3m'|'6m'|'1y'|'custom' => {
+    const fmt = (d: Date) => d.toISOString().slice(0,10)
+    for(const option of presetOptions){
+      const { from, to } = presetMap[option.key]()
+      if(fmt(value.from) === fmt(from) && fmt(value.to) === fmt(to)){
+        return option.key
+      }
+    }
+    return 'custom'
+  }
+
+  const selectPreset = (key: '7d'|'30d'|'lastm'|'3m'|'6m'|'1y') => {
+    setActivePreset(key)
+    const presetRange = presetMap[key]()
+    const nextRange: DateRange = { from: new Date(presetRange.from), to: new Date(presetRange.to) }
+    setRange(nextRange)
+    setGscRangeBySite({})
+    setGa4RangeBySite({})
+    setSkipNextAutoFetch(false)
+  }
+
+  useEffect(()=>{
+    const key = rangeToKey(range)
+    if(key !== activePreset){
+      setActivePreset(key)
+    }
+  }, [range.from, range.to, activePreset])
+
   const applySnapshot = (snap: PerformanceSnapshot | null)=>{
     if(!snap) return
+    if(activePreset !== '30d') return
+    const snapRange = snap.range ? { from: new Date(snap.range.from), to: new Date(snap.range.to) } : null
+    if(!snapRange) return
+    snapRange.from.setHours(0,0,0,0)
+    snapRange.to.setHours(0,0,0,0)
+    if(rangeToKey(snapRange) !== '30d') return
+    setRange({ from: snapRange.from, to: snapRange.to })
+    setGscRangeBySite({})
+    setGa4RangeBySite({})
     setData(snap.data || {})
     setSnapshotTs(snap.ts)
     setLoading(false)
@@ -77,8 +134,15 @@ export default function PerformanceClient(){
     if(refreshBusy) return
     setRefreshBusy(true)
     try{
-      const snap = await prefetchPerformanceSnapshot({ force: true })
-      if(snap){ applySnapshot(snap) }
+      if(activePreset === '30d'){
+        const snap = await prefetchPerformanceSnapshot({ force: true })
+        if(snap){
+          applySnapshot(snap)
+          return
+        }
+      }
+      setSkipNextAutoFetch(false)
+      setRange(prev => ({ from: new Date(prev.from), to: new Date(prev.to) }))
     }catch(err:any){
       console.error(err)
       alert('Failed to refresh performance data')
@@ -313,9 +377,23 @@ export default function PerformanceClient(){
 
   return (
     <>
-      <div className="page-topbar" style={{justifyContent:'space-between', alignItems:'center'}}>
-        <WebsitePicker showAll onChange={(s)=> setSiteId(s? s.id : '__ALL__')} />
-        <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+      <div className="page-topbar" style={{justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12}}>
+        <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+          <WebsitePicker showAll onChange={(s)=> setSiteId(s? s.id : '__ALL__')} />
+          <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+            {presetOptions.map(p => (
+              <button
+                key={p.key}
+                className="btn secondary"
+                style={{height:32, padding:'0 12px', background: activePreset===p.key? '#1f1f3a':'#0f0f20', borderColor: activePreset===p.key? '#3a3a5d':'#2b2b47'}}
+                onClick={()=> selectPreset(p.key)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          </div>
+        </div>
           {snapshotTs && (
             <span className="muted" style={{fontSize:12}}>
               Updated {new Date(snapshotTs).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' })}
@@ -474,7 +552,7 @@ function QueryDetails({ siteId, term, range, data, setData, gscSite }:{ siteId:s
   const [showImpr, setShowImpr] = useState(true)
   const [showPos, setShowPos] = useState(true)
   const [qRange, setQRange] = useState<DateRange>(range)
-  useEffect(()=>{ setQRange(range) }, [range.from, range.to])
+  useEffect(()=>{ setQRange(range) }, [range.from, range.to, activePreset])
   const setLastDays=(days:number)=>{ const y=new Date(); y.setDate(y.getDate()-1); const from=new Date(y.getTime()-(days-1)*86400000); setQRange({ from, to:y }) }
   useEffect(()=>{
     (async()=>{
