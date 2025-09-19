@@ -1,6 +1,8 @@
 ﻿"use client"
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { getKeywordSnapshot, prefetchKeywordsSnapshots, SNAPSHOT_EVENT_NAME, SNAPSHOT_TTL_MS } from '@/lib/snapshots'
+import type { KeywordSnapshot } from '@/lib/snapshots'
 
 type Kw = {
   id: string
@@ -128,6 +130,9 @@ function cellStyle(position: number | null){
 
 export default function KeywordsClient(){
   // Core state
+  const [snapshotTs, setSnapshotTs] = useState<number|null>(null)
+  const [refreshBusy, setRefreshBusy] = useState(false)
+  const [listLoading, setListLoading] = useState(false)
   const [siteId, setSiteId] = useState('')
   const [sites, setSites] = useState<Array<{ id:string, name:string, url:string }>>([])
   const [list, setList] = useState<Kw[]>([])
@@ -139,6 +144,31 @@ export default function KeywordsClient(){
   const [posFilter, setPosFilter] = useState<'all'|'top1'|'top3'|'top10'|'top20'|'top50'|'gt50'|'unknown'>('all')
   const [posMin, setPosMin] = useState(1)
   const [posMax, setPosMax] = useState(100)
+
+  const applySnapshot = (snap: KeywordSnapshot | null)=>{
+    if(!snap) return false
+    setList(Array.isArray(snap.list) ? snap.list : [])
+    setSnapshotTs(snap.ts)
+    return true
+  }
+
+  const refreshSnapshot = async()=>{
+    if(!siteId) return
+    setRefreshBusy(true)
+    setListLoading(true)
+    try{
+      const result = await prefetchKeywordsSnapshots({ force: true, siteIds:[siteId] })
+      const snap = result[siteId] || getKeywordSnapshot(siteId)
+      applySnapshot(snap || null)
+    }catch(err){
+      console.error(err)
+      alert('Failed to refresh keyword data')
+    }finally{
+      setRefreshBusy(false)
+      setListLoading(false)
+    }
+  }
+
 
   // Add/bulk
   const [q, setQ] = useState('')
@@ -212,12 +242,53 @@ export default function KeywordsClient(){
   })() }, [])
 
   // Load keywords for selected site
-  useEffect(()=>{ (async()=>{
-    if(!siteId) return
-    const r = await fetch(`/api/keywords?siteId=${encodeURIComponent(siteId)}`)
-    const j = await r.json().catch(()=>null)
-    setList(j?.ok && Array.isArray(j.data) ? j.data : [])
-  })() }, [siteId])
+  useEffect(()=>{
+    let cancelled = false
+    ;(async()=>{
+      if(!siteId){
+        setList([])
+        setSnapshotTs(null)
+        return
+      }
+      const snap = getKeywordSnapshot(siteId)
+      const fresh = snap && (Date.now() - snap.ts) < SNAPSHOT_TTL_MS
+      if(snap){
+        applySnapshot(snap)
+        if(fresh){
+          return
+        }
+      }
+      setListLoading(true)
+      try{
+        const result = await prefetchKeywordsSnapshots({ force: true, siteIds:[siteId] })
+        const updated = result[siteId]
+        if(updated && !cancelled){
+          applySnapshot(updated)
+        }
+      }catch(err){
+        console.error(err)
+      }finally{
+        if(!cancelled) setListLoading(false)
+      }
+    })()
+    return ()=>{ cancelled = true }
+  }, [siteId])
+
+  useEffect(()=>{
+    if(typeof window === 'undefined') return
+    const handler = (event: Event)=>{
+      const detail = (event as CustomEvent<any>).detail
+      if(detail?.type === 'keywords'){
+        const updatedId = detail?.meta?.siteId as string | undefined
+        if(!updatedId || updatedId === siteId){
+          const snap = getKeywordSnapshot(siteId)
+          applySnapshot(snap || null)
+        }
+      }
+    }
+    window.addEventListener(SNAPSHOT_EVENT_NAME, handler as EventListener)
+    return ()=> window.removeEventListener(SNAPSHOT_EVENT_NAME, handler as EventListener)
+  }, [siteId])
 
   // Build timeline dates for the table (always end at "today" visually)
   const todayKey = today()
@@ -609,6 +680,13 @@ export default function KeywordsClient(){
           </div>
           <button className={`btn ${trackerMode==='api' ? '' : 'secondary'}`} onClick={()=> setTrackerMode('api')} disabled={trackerMode==='api'}>API</button>
           <button className={`btn ${trackerMode==='gsc' ? '' : 'secondary'}`} onClick={()=> setTrackerMode('gsc')} disabled={trackerMode==='gsc' || !getGscSite()}>GSC</button>
+          {snapshotTs && (
+            <span className="muted" style={{fontSize:12}}>
+              Updated {new Date(snapshotTs).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          {listLoading && <span className="muted" style={{fontSize:12}}>Loading...</span>}
+          <button className="btn secondary" onClick={refreshSnapshot} disabled={refreshBusy || !siteId || listLoading}>{refreshBusy? 'Refreshing...' : 'Refresh'}</button>
         </div>
       </header>
 

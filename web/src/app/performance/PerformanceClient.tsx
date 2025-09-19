@@ -6,6 +6,8 @@ import KpiCard from "@/components/dashboard/KpiCard"
 import PerformancePanel, { Point } from "@/components/dashboard/PerformancePanel"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { signIn } from "next-auth/react"
+import { getPerformanceSnapshot, prefetchPerformanceSnapshot, SNAPSHOT_EVENT_NAME } from "@/lib/snapshots"
+import type { PerformanceSnapshot } from "@/lib/snapshots"
 
 type Site = { id: string, name: string, url: string }
 type Integ = { gscSite?: string, ga4Property?: string }
@@ -28,108 +30,235 @@ export default function PerformanceClient(){
   const [aiOpen, setAiOpen] = useState(false)
   const [aiText, setAiText] = useState('')
   const [aiBusy, setAiBusy] = useState<string|undefined>(undefined)
+  const [snapshotTs, setSnapshotTs] = useState<number|null>(null)
+  const [refreshBusy, setRefreshBusy] = useState(false)
+  const [skipNextAutoFetch, setSkipNextAutoFetch] = useState(false)
 
+  const dataRef = useRef<Record<string, any>>({})
+  useEffect(()=>{ dataRef.current = data }, [data])
   const sites = useMemo(()=> loadSites(), [])
   const selectedAll = siteId==='__ALL__'
+  const activeIds = useMemo(()=> {
+    if(selectedAll){ return sites.map(s=>s.id) }
+    return siteId? [siteId] : []
+  }, [selectedAll, siteId, sites])
+  const activeIdsKey = useMemo(()=> activeIds.join(','), [activeIds])
 
   const fmtDate = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
+  const applySnapshot = (snap: PerformanceSnapshot | null)=>{
+    if(!snap) return
+    setData(snap.data || {})
+    setSnapshotTs(snap.ts)
+    setLoading(false)
+    setSkipNextAutoFetch(true)
+  }
+  useEffect(()=>{
+    const snap = getPerformanceSnapshot()
+    if(snap){
+      applySnapshot(snap)
+    }
+  }, [])
 
   useEffect(()=>{
-    const run = async()=>{
-      const ids = selectedAll? sites.map(s=>s.id) : (siteId? [siteId] : [])
-      if(ids.length===0){ setData({}); return }
-      setLoading(true)
-      try{
-        const today = new Date(); const y=new Date(today); y.setDate(today.getDate()-1)
-        let start=new Date(range.from), end=new Date(range.to)
-        if(end>y) end=y; if(start>end) start=new Date(end)
-        const days = Math.max(1, Math.round((end.getTime()-start.getTime())/86400000)+1)
-        const prevEnd = new Date(start); prevEnd.setDate(start.getDate()-1)
-        const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate()-(days-1))
-
-        const results: Record<string, any> = {}
-        for(const id of ids){
-          const integ = loadInteg(id)
-          const site = sites.find(s=>s.id===id)!
-          const gsc = integ.gscSite
-          const ga4 = integ.ga4Property
-          const item: any = { site, integ, points: [] as Point[], totals:{ clicks:0, impressions:0, ctr:0, position:0 }, prev:{ clicks:0, impressions:0, ctr:0, position:0 }, ga4:{ sessions:0, channels:{} as Record<string,number> }, queries: [] as Array<{ query:string, clicks:number, url?:string }>, errors:{} }
-          if(gsc){
-            const rG = gscRangeBySite[id] || { from:start, to:end }
-            const gStart = rG.from, gEnd = rG.to
-            // GSC daily
-            const r = await fetch(`/api/google/gsc/search?${qs({ site:gsc, start: fmtDate(gStart), end: fmtDate(gEnd) })}`)
-            if(!r.ok){
-              item.errors.gsc = `GSC ${r.status}`
-              try{ item.errors.gscText = await r.text() }catch{}
-            }
-            const cur = r.ok? await r.json(): { rows: [] }
-            const rows:any[] = cur.rows||[]
-            const pts: Point[] = rows.map(rr=> ({ date: rr.keys?.[0], clicks: rr.clicks||0, impressions: rr.impressions||0, ctr: Math.round((rr.ctr||0)*1000)/10, position: Math.round((rr.position||0)*10)/10 }))
-            item.points = pts
-            const sum=(k:string)=> rows.reduce((a,r)=> a+(r[k]||0),0)
-            const totImpr = sum('impressions')
-            item.totals.clicks = sum('clicks'); item.totals.impressions=totImpr
-            item.totals.ctr = totImpr? (item.totals.clicks/totImpr*100):0
-            const posWeighted = rows.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
-            item.totals.position = totImpr? (posWeighted / totImpr) : 0
-            // previous window matched to GSC range
-            const gDays = Math.max(1, Math.round((gEnd.getTime()-gStart.getTime())/86400000)+1)
-            const gPrevEnd = new Date(gStart); gPrevEnd.setDate(gStart.getDate()-1)
-            const gPrevStart = new Date(gPrevEnd); gPrevStart.setDate(gPrevEnd.getDate()-(gDays-1))
-            const r2 = await fetch(`/api/google/gsc/search?${qs({ site:gsc, start: fmtDate(gPrevStart), end: fmtDate(gPrevEnd) })}`)
-            const prev = r2.ok? await r2.json(): { rows: [] }
-            const rows2:any[] = prev.rows||[]
-            const sum2=(k:string)=> rows2.reduce((a,r)=> a+(r[k]||0),0)
-            const prevImpr = sum2('impressions')
-            item.prev.clicks=sum2('clicks'); item.prev.impressions=prevImpr
-            item.prev.ctr = prevImpr? (item.prev.clicks/prevImpr*100):0
-            const prevWeighted = rows2.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
-            item.prev.position = prevImpr? (prevWeighted / prevImpr) : 0
-            // queries (current + previous for deltas)
-            const qres = await fetch(`/api/google/gsc/queries?${qs({ site:gsc, start: fmtDate(gStart), end: fmtDate(gEnd), rowLimit: 25000 })}`)
-            const qjson = qres.ok? await qres.json() : { rows: [] }
-            const qrows = (qjson.rows||[]) as any[]
-            const qprevRes = await fetch(`/api/google/gsc/queries?${qs({ site:gsc, start: fmtDate(gPrevStart), end: fmtDate(gPrevEnd), rowLimit: 25000 })}`)
-            const qprev = qprevRes.ok? await qprevRes.json() : { rows: [] }
-            const prevMap = new Map<string, any>((qprev.rows||[]).map((r:any)=> [r.keys?.[0], r]))
-            const list = qrows.map((r:any)=>{
-              const key = r.keys?.[0]
-              const prev = prevMap.get(key) || {}
-              return { query: key, clicks: r.clicks||0, impressions: r.impressions||0, position: Number(r.position||0), deltaClicks: (r.clicks||0) - (prev.clicks||0), deltaImpressions: (r.impressions||0) - (prev.impressions||0), deltaPosition: (prev.position!==undefined? Number(r.position||0) - Number(prev.position||0) : 0) }
-            })
-            list.sort((a:any,b:any)=> (b.clicks||0) - (a.clicks||0))
-            item.queries = list
-            item.queriesClicks = list.reduce((a:number,q:any)=> a + (q.clicks||0), 0)
-          }
-          if(ga4){
-            const rA = ga4RangeBySite[id] || { from:start, to:end }
-            const aStart = rA.from, aEnd = rA.to
-            try{
-              const gres = await fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(aStart), end: fmtDate(aEnd) }) })
-              const gjson = await gres.json()
-              const rows:any[] = gjson.rows||[]
-              const chan: Record<string,number> = {}
-              rows.forEach(r=>{ const ch=r.dimensionValues?.[0]?.value||'Other'; const v=Number(r.metricValues?.[0]?.value||0); chan[ch]=(chan[ch]||0)+v })
-              item.ga4.channels = chan
-              item.ga4.sessions = Object.values(chan).reduce((a,b)=>a+(b||0),0)
-            }catch(e:any){ item.errors.ga4 = 'GA4 error' }
-          }
-          results[id]=item
-        }
-        setData(results)
-      } finally {
-        setLoading(false)
+    if(typeof window === 'undefined') return
+    const handler = (event: Event)=>{
+      const detail = (event as CustomEvent<any>).detail
+      if(detail?.type === 'performance'){
+        const snap = getPerformanceSnapshot()
+        if(snap){ applySnapshot(snap) }
       }
     }
-    run()
-  }, [siteId, range.from, range.to, sites.length, selectedAll, JSON.stringify(gscRangeBySite), JSON.stringify(ga4RangeBySite)])
+    window.addEventListener(SNAPSHOT_EVENT_NAME, handler as EventListener)
+    return ()=> window.removeEventListener(SNAPSHOT_EVENT_NAME, handler as EventListener)
+  }, [])
+
+  const refreshSnapshot = async()=>{
+    if(refreshBusy) return
+    setRefreshBusy(true)
+    try{
+      const snap = await prefetchPerformanceSnapshot({ force: true })
+      if(snap){ applySnapshot(snap) }
+    }catch(err:any){
+      console.error(err)
+      alert('Failed to refresh performance data')
+    }finally{
+      setRefreshBusy(false)
+    }
+  }
+
+
+
+  useEffect(()=>{
+    if(activeIds.length===0){
+      setData({})
+      setLoading(false)
+      return
+    }
+    if(skipNextAutoFetch){
+      setSkipNextAutoFetch(false)
+      const hasAllCached = activeIds.every(id => dataRef.current[id])
+      if(hasAllCached){
+        setLoading(false)
+        return
+      }
+    }
+    let cancelled = false
+    setLoading(true)
+    setData(prev=>{
+      const next: Record<string, any> = {}
+      activeIds.forEach(id=>{
+        if(prev[id]) next[id] = prev[id]
+      })
+      return next
+    })
+    const loadSite = async(id: string)=>{
+      const integ = loadInteg(id)
+      const site = sites.find(s=>s.id===id)
+      if(!site) return
+      const gsc = integ.gscSite
+      const ga4 = integ.ga4Property
+      const item: any = { site, integ, points: [] as Point[], totals:{ clicks:0, impressions:0, ctr:0, position:0 }, prev:{ clicks:0, impressions:0, ctr:0, position:0 }, ga4:{ sessions:0, channels:{} as Record<string,number> }, queries: [] as Array<{ query:string, clicks:number, url?:string }>, errors:{} }
+
+      const today = new Date()
+      const y = new Date(today)
+      y.setDate(today.getDate()-1)
+      let start = new Date(range.from)
+      let end = new Date(range.to)
+      if(end>y) end = y
+      if(start>end) start = new Date(end)
+
+      let ga4Promise: Promise<Response>|undefined
+      if(ga4){
+        const rA = ga4RangeBySite[id] || { from:start, to:end }
+        ga4Promise = fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(rA.from), end: fmtDate(rA.to) }) })
+      }
+
+      if(gsc){
+        const rG = gscRangeBySite[id] || { from:start, to:end }
+        const gStart = rG.from, gEnd = rG.to
+        const gDays = Math.max(1, Math.round((gEnd.getTime()-gStart.getTime())/86400000)+1)
+        const gPrevEnd = new Date(gStart); gPrevEnd.setDate(gStart.getDate()-1)
+        const gPrevStart = new Date(gPrevEnd); gPrevStart.setDate(gPrevEnd.getDate()-(gDays-1))
+
+        const currentSearchPromise = fetch(`/api/google/gsc/search?${qs({ site:gsc, start: fmtDate(gStart), end: fmtDate(gEnd) })}`)
+        const prevSearchPromise = fetch(`/api/google/gsc/search?${qs({ site:gsc, start: fmtDate(gPrevStart), end: fmtDate(gPrevEnd) })}`)
+        const currentQueriesPromise = fetch(`/api/google/gsc/queries?${qs({ site:gsc, start: fmtDate(gStart), end: fmtDate(gEnd), rowLimit: 25000 })}`)
+        const prevQueriesPromise = fetch(`/api/google/gsc/queries?${qs({ site:gsc, start: fmtDate(gPrevStart), end: fmtDate(gPrevEnd), rowLimit: 25000 })}`)
+
+        let rows:any[] = []
+        try{
+          const res = await currentSearchPromise
+          if(res.ok){
+            const cur = await res.json()
+            rows = cur.rows||[]
+          }else{
+            item.errors.gsc = `GSC ${res.status}`
+            try{ item.errors.gscText = await res.text() }catch{}
+          }
+        }catch(e:any){
+          item.errors.gsc = 'GSC request failed'
+          item.errors.gscText = e?.message
+        }
+
+        let rows2:any[] = []
+        try{
+          const res2 = await prevSearchPromise
+          if(res2.ok){
+            const prevData = await res2.json()
+            rows2 = prevData.rows||[]
+          }
+        }catch{}
+
+        const [queriesNow, queriesPrev] = await Promise.allSettled([currentQueriesPromise, prevQueriesPromise])
+
+        let qrows:any[] = []
+        if(queriesNow.status==='fulfilled'){
+          try{
+            const qjson = await queriesNow.value.json()
+            qrows = (qjson.rows||[]) as any[]
+          }catch{}
+        }
+
+        let prevMap = new Map<string, any>()
+        if(queriesPrev.status==='fulfilled'){
+          try{
+            const prevJson = await queriesPrev.value.json()
+            prevMap = new Map<string, any>((prevJson.rows||[]).map((r:any)=> [r.keys?.[0], r]))
+          }catch{}
+        }
+
+        const pts: Point[] = rows.map(rr=> ({ date: rr.keys?.[0], clicks: rr.clicks||0, impressions: rr.impressions||0, ctr: Math.round((rr.ctr||0)*1000)/10, position: Math.round((rr.position||0)*10)/10 }))
+        item.points = pts
+
+        const sum=(k:string)=> rows.reduce((a,r)=> a+(r[k]||0),0)
+        const totImpr = sum('impressions')
+        item.totals.clicks = sum('clicks')
+        item.totals.impressions = totImpr
+        item.totals.ctr = totImpr? (item.totals.clicks/item.totals.impressions*100):0
+        const posWeighted = rows.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
+        item.totals.position = totImpr? (posWeighted / totImpr) : 0
+
+        const sumPrev=(k:string)=> rows2.reduce((a,r)=> a+(r[k]||0),0)
+        const prevImpr = sumPrev('impressions')
+        item.prev.clicks = sumPrev('clicks')
+        item.prev.impressions = prevImpr
+        item.prev.ctr = prevImpr? (item.prev.clicks/prevImpr*100):0
+        const prevWeighted = rows2.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
+        item.prev.position = prevImpr? (prevWeighted / prevImpr) : 0
+
+        const list = qrows.map((r:any)=> {
+          const key = r.keys?.[0]
+          const prevRow = prevMap.get(key) || {}
+          return {
+            query: key,
+            clicks: r.clicks||0,
+            impressions: r.impressions||0,
+            position: Number(r.position||0),
+            deltaClicks: (r.clicks||0) - (prevRow.clicks||0),
+            deltaImpressions: (r.impressions||0) - (prevRow.impressions||0),
+            deltaPosition: prevRow.position!==undefined ? Number(r.position||0) - Number(prevRow.position||0) : 0
+          }
+        })
+        list.sort((a:any,b:any)=> (b.clicks||0) - (a.clicks||0))
+        item.queries = list
+        item.queriesClicks = list.reduce((a:number,q:any)=> a + (q.clicks||0), 0)
+      }
+
+      if(ga4Promise){
+        try{
+          const gres = await ga4Promise
+          if(gres.ok){
+            const gjson = await gres.json()
+            const rows:any[] = gjson.rows||[]
+            const chan: Record<string, number> = {}
+            rows.forEach(r=>{ const ch=r.dimensionValues?.[0]?.value||'Other'; const v=Number(r.metricValues?.[0]?.value||0); chan[ch] = (chan[ch] || 0) + v })
+            item.ga4.channels = chan
+            item.ga4.sessions = Object.values(chan).reduce((a,b)=> a + (Number(b)||0),0)
+          }else{
+            item.errors.ga4 = `GA4 ${gres.status}`
+          }
+        }catch{
+          item.errors.ga4 = 'GA4 error'
+        }
+      }
+
+      if(!cancelled){
+        setData(prev=> ({ ...prev, [id]: item }))
+      }
+    }
+    const tasks = activeIds.map(id=> loadSite(id))
+    Promise.allSettled(tasks).then(()=> {
+      if(!cancelled){
+        setLoading(false)
+      }
+    })
+    return ()=>{ cancelled = true }
+  }, [activeIdsKey, range.from, range.to, JSON.stringify(gscRangeBySite), JSON.stringify(ga4RangeBySite), sites, skipNextAutoFetch])
 
   const blocks = useMemo(()=>{
-    const ids = selectedAll? sites.map(s=>s.id) : (siteId? [siteId]: [])
-    return ids.map(id=> data[id]).filter(Boolean)
-  }, [data, siteId, selectedAll, sites])
+    return activeIds.map(id=> data[id]).filter(Boolean)
+  }, [activeIdsKey, activeIds, data])
 
   const gscLink = (siteUrl?:string)=> siteUrl? `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(siteUrl)}` : '#'
   const ga4Link = (prop?:string)=>{
@@ -184,8 +313,16 @@ export default function PerformanceClient(){
 
   return (
     <>
-      <div className="page-topbar" style={{justifyContent:'space-between'}}>
+      <div className="page-topbar" style={{justifyContent:'space-between', alignItems:'center'}}>
         <WebsitePicker showAll onChange={(s)=> setSiteId(s? s.id : '__ALL__')} />
+        <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+          {snapshotTs && (
+            <span className="muted" style={{fontSize:12}}>
+              Updated {new Date(snapshotTs).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          <button className="btn secondary" onClick={refreshSnapshot} disabled={refreshBusy}>{refreshBusy? 'Refreshing...' : 'Refresh'}</button>
+        </div>
       </div>
       {loading && <div className="muted">Loading data…</div>}
       {blocks.length===0 && !loading && <div className="muted">Select a site, or choose All Sites.</div>}
