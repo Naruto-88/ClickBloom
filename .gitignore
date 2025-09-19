@@ -4,10 +4,12 @@ node_modules/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+*.swp
 
 # Next.js / build outputs
 .next/
 .next-*/
+.turbo
 out/
 dist/
 coverage/
