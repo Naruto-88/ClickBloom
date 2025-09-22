@@ -17,6 +17,22 @@ function loadInteg(id: string): Integ{ try{ return JSON.parse(localStorage.getIt
 
 const fmtNum = (n:number)=> n>=1000? (n/1000).toFixed(1)+'K' : String(n)
 
+const ga4Delta = (current:number, previous:number)=>{
+  const diff = current - previous
+  if(!previous && !current) return { text: 'vs prev: no change', color: '#a3a6c2' }
+  if(!previous){
+    return { text: `vs prev: +${fmtNum(current)} (new)`, color: '#34d399' }
+  }
+  const pct = previous ? (diff/previous)*100 : 0
+  const sign = diff >= 0 ? '+' : '-'
+  const absDiff = Math.round(Math.abs(diff))
+  const absPct = Math.abs(pct).toFixed(1)
+  if(absDiff===0){
+    return { text: 'vs prev: no change', color: '#a3a6c2' }
+  }
+  return { text: `vs prev: ${sign}${fmtNum(absDiff)} (${sign}${absPct}%)`, color: diff>=0? '#34d399':'#f87171' }
+}
+
 export default function PerformanceClient(){
   const [siteId, setSiteId] = useState<string|undefined>(undefined)
   const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setHours(0,0,0,0); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-29); s.setHours(0,0,0,0); return { from:s,to:y } })
@@ -182,7 +198,7 @@ export default function PerformanceClient(){
       if(!site) return
       const gsc = integ.gscSite
       const ga4 = integ.ga4Property
-      const item: any = { site, integ, points: [] as Point[], totals:{ clicks:0, impressions:0, ctr:0, position:0 }, prev:{ clicks:0, impressions:0, ctr:0, position:0 }, ga4:{ sessions:0, channels:{} as Record<string,number> }, queries: [] as Array<{ query:string, clicks:number, url?:string }>, errors:{} }
+      const item: any = { site, integ, points: [] as Point[], totals:{ clicks:0, impressions:0, ctr:0, position:0 }, prev:{ clicks:0, impressions:0, ctr:0, position:0 }, ga4:{ sessions:0, prevSessions:0, channels:{} as Record<string,number>, prevChannels:{} as Record<string,number> }, queries: [] as Array<{ query:string, clicks:number, url?:string }>, errors:{} }
 
       const today = new Date()
       const y = new Date(today)
@@ -195,7 +211,12 @@ export default function PerformanceClient(){
       let ga4Promise: Promise<Response>|undefined
       if(ga4){
         const rA = ga4RangeBySite[id] || { from:start, to:end }
-        ga4Promise = fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(rA.from), end: fmtDate(rA.to) }) })
+        const gaStart = rA.from
+        const gaEnd = rA.to
+        const gaDays = Math.max(1, Math.round((gaEnd.getTime()-gaStart.getTime())/86400000)+1)
+        const gaPrevEnd = new Date(gaStart.getTime()); gaPrevEnd.setDate(gaPrevEnd.getDate()-1)
+        const gaPrevStart = new Date(gaPrevEnd.getTime()); gaPrevStart.setDate(gaPrevStart.getDate()-(gaDays-1))
+        ga4Promise = fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(gaStart), end: fmtDate(gaEnd), prevStart: fmtDate(gaPrevStart), prevEnd: fmtDate(gaPrevEnd) }) })
       }
 
       if(gsc){
@@ -296,9 +317,19 @@ export default function PerformanceClient(){
             const gjson = await gres.json()
             const rows:any[] = gjson.rows||[]
             const chan: Record<string, number> = {}
-            rows.forEach(r=>{ const ch=r.dimensionValues?.[0]?.value||'Other'; const v=Number(r.metricValues?.[0]?.value||0); chan[ch] = (chan[ch] || 0) + v })
+            const prevChan: Record<string, number> = {}
+            rows.forEach(r=>{
+              const ch = r.dimensionValues?.[0]?.value || 'Other'
+              const metrics = r.metricValues || []
+              const currentVal = Number(metrics?.[0]?.value || 0)
+              chan[ch] = (chan[ch] || 0) + currentVal
+              const prevVal = Number(metrics?.[1]?.value || 0)
+              prevChan[ch] = (prevChan[ch] || 0) + prevVal
+            })
             item.ga4.channels = chan
+            item.ga4.prevChannels = prevChan
             item.ga4.sessions = Object.values(chan).reduce((a,b)=> a + (Number(b)||0),0)
+            item.ga4.prevSessions = Object.values(prevChan).reduce((a,b)=> a + (Number(b)||0),0)
           }else{
             item.errors.ga4 = `GA4 ${gres.status}`
           }
@@ -512,10 +543,32 @@ export default function PerformanceClient(){
           <div className="card" style={{marginTop:8}}>
             <div className="panel-title"><strong>Acquisition Channels</strong></div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12}}>
-              {['Organic Search','Paid Search','Direct'].map((k)=> (
-                <div key={k} className="kpi-tile"><div><div className="value">{fmtNum(b.ga4.channels[k]||0)}</div><div className="muted">{k} Sessions</div></div></div>
-              ))}
-              <div className="kpi-tile"><div><div className="value">{fmtNum(b.ga4.sessions||0)}</div><div className="muted">All Sessions</div></div></div>
+              {['Organic Search','Paid Search','Direct'].map((k)=> {
+                const current = b.ga4.channels[k] || 0
+                const previous = b.ga4.prevChannels?.[k] || 0
+                const delta = ga4Delta(current, previous)
+                return (
+                  <div key={k} className="kpi-tile">
+                    <div>
+                      <div className="value">{fmtNum(current)}</div>
+                      <div className="muted">{k} Sessions</div>
+                      <div className="muted" style={{color: delta.color}}>{delta.text}</div>
+                    </div>
+                  </div>
+                )
+              })}
+              {(() => {
+                const delta = ga4Delta(b.ga4.sessions||0, b.ga4.prevSessions||0)
+                return (
+                  <div className="kpi-tile">
+                    <div>
+                      <div className="value">{fmtNum(b.ga4.sessions||0)}</div>
+                      <div className="muted">All Sessions</div>
+                      <div className="muted" style={{color: delta.color}}>{delta.text}</div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         </div>

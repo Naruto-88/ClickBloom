@@ -3,7 +3,7 @@ export const runtime = 'nodejs'
 
 export async function POST(req: Request){
   try{
-    const { property, start, end } = await req.json()
+    const { property, start, end, prevStart, prevEnd } = await req.json()
     if(!property || !start || !end) return new Response('Missing params', { status: 400 })
     const session = await auth()
     if(!session) return new Response('Unauthorized', { status: 401 })
@@ -11,8 +11,10 @@ export async function POST(req: Request){
     const token = session.access_token as string | undefined
     if(!token) return new Response('No access token', { status: 401 })
     const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`
+    const dateRanges: Array<{ startDate:string, endDate:string, name?:string }> = [{ startDate: start, endDate: end, name: 'current' }]
+    if(prevStart && prevEnd){ dateRanges.push({ startDate: prevStart, endDate: prevEnd, name: 'previous' }) }
     const body = {
-      dateRanges: [{ startDate: start, endDate: end }],
+      dateRanges,
       dimensions: [{ name: 'sessionDefaultChannelGroup' }],
       metrics: [{ name: 'sessions' }],
       limit: 1000

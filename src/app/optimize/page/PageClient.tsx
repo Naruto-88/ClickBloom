@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import WebsitePicker from '@/components/dashboard/WebsitePicker'
-import RangeDropdown, { DateRange } from '@/components/ui/RangeDropdown'
+import type { DateRange } from '@/components/ui/RangeDropdown'
 import KpiCard from '@/components/dashboard/KpiCard'
 import Modal from '@/components/ui/Modal'
 
@@ -19,7 +19,7 @@ export default function PageClient(){
   const u = params?.get('u') || ''
   const url = useMemo(()=> u? fromB64(u) : '', [u])
   const [siteId, setSiteId] = useState<string|undefined>(()=> activeSite())
-  const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-27); return { from:s,to:y } })
+  const [range] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-27); return { from:s,to:y } })
   const [points, setPoints] = useState<Point[]>([])
   const [scan, setScan] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -575,10 +575,11 @@ export default function PageClient(){
       <div className="page-header">
         <h2 style={{margin:0}}>Page SEO Optimization</h2>
         <div className="breadcrumb">Home - <strong>Page SEO Optimization</strong></div>
-        <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:8}}>
-          {(loading || queriesLoading) && <span className="spinner" title="Loading selected range" aria-label="Loading selected range"/>}
-          <RangeDropdown value={range} onChange={setRange}/>
-        </div>
+        {(loading || queriesLoading) && (
+          <div style={{marginLeft:'auto', display:'flex', alignItems:'center'}}>
+            <span className="spinner" title="Loading selected range" aria-label="Loading selected range"/>
+          </div>
+        )}
       </div>
 
       <section className="grid" style={{gridTemplateColumns:'repeat(4,1fr)', marginBottom:16, position:'relative'}}>
