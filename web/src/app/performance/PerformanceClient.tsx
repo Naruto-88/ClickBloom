@@ -392,8 +392,8 @@ export default function PerformanceClient(){
               </button>
             ))}
           </div>
-          </div>
         </div>
+        <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
           {snapshotTs && (
             <span className="muted" style={{fontSize:12}}>
               Updated {new Date(snapshotTs).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' })}
