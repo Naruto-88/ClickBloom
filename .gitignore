@@ -19,3 +19,16 @@ coverage/
 
 # App data
 web-data/
+
+# Local temp files in web/
+web/__*.txt
+web/_snippet.txt
+web/temp_*.txt
+web/tmp*.txt
+
+# Duplicate tree (should not be committed)
+web/web/
+
+# WordPress plugin artifacts
+web/wp-plugin/
+web/wp-plugin.zip
