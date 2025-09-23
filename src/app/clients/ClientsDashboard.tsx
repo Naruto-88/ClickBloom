@@ -32,7 +32,7 @@ function lastMonth(): DateRange{
 }
 
 function fmtDateISO(d: Date){ return d.toISOString().slice(0,10) }
-function pct(a:number, b:number){ if(!b) return 0; return (a-b)/b*100 }
+function pct(a:number, b:number){ if(!b) return a>0 ? 100 : 0; return (a-b)/b*100 }
 
 function acronym(name: string){
   const parts = (name||'').split(/\s+|-/).filter(Boolean)
@@ -65,7 +65,15 @@ export default function ClientsDashboard(){
   const [snapshotTs, setSnapshotTs] = useState<number|null>(null)
   const [updateReady, setUpdateReady] = useState(false)
   const [pendingRows, setPendingRows] = useState<Row[]|null>(null)
-  const [autoApply, setAutoApply] = useState<boolean>(()=>{ try{ return (localStorage.getItem('clients:autoApply')||'false')==='true' }catch{ return false } })
+  const [autoApply, setAutoApply] = useState<boolean>(()=>{
+    try{
+      const stored = localStorage.getItem('clients:autoApply')
+      if(stored === null) return true
+      return stored === 'true'
+    }catch{
+      return true
+    }
+  })
   const [clock, setClock] = useState(0)
   const [highlightId, setHighlightId] = useState<string|undefined>()
   const [showPrev, setShowPrev] = useState(true)
@@ -210,6 +218,58 @@ export default function ClientsDashboard(){
     return 'good'
   }
 
+  async function buildRows(start: string, end: string, pStart: string, pEnd: string){
+    const zeroGsc = { clicks:0, impressions:0, position:0, rows:0 }
+    return Promise.all(sites.map(async (w) => {
+      const integ = loadIntegrations(w.id)
+      const gscSite = integ.gscSite
+      const ga4Prop = integ.ga4Property
+
+      const [gCurr, gPrev] = gscSite
+        ? await Promise.all([
+            fetchGscTotals(gscSite, start, end, w.name||w.url).catch(()=>zeroGsc),
+            fetchGscTotals(gscSite, pStart, pEnd, w.name||w.url).catch(()=>zeroGsc)
+          ])
+        : [zeroGsc, zeroGsc]
+
+      let orgSessions = 0, orgSessionsPrev = 0, orgUsers = 0, orgUsersPrev = 0
+      if(ga4Prop){
+        const [sess, sessPrev, users, usersPrev] = await Promise.all([
+          fetchGa4OrganicSessions(ga4Prop, start, end, w.name||w.url).catch(()=>0),
+          fetchGa4OrganicSessions(ga4Prop, pStart, pEnd, w.name||w.url).catch(()=>0),
+          fetchGa4OrganicUsers(ga4Prop, start, end, w.name||w.url).catch(()=>0),
+          fetchGa4OrganicUsers(ga4Prop, pStart, pEnd, w.name||w.url).catch(()=>0)
+        ])
+        orgSessions = sess
+        orgSessionsPrev = sessPrev
+        orgUsers = users
+        orgUsersPrev = usersPrev
+      }
+
+      const status = decideStatus(
+        { clicks: gCurr.clicks, impressions: gCurr.impressions },
+        { clicks: gPrev.clicks, impressions: gPrev.impressions }
+      )
+
+      return {
+        id: w.id,
+        name: w.name,
+        url: w.url,
+        gscClicks: gCurr.clicks,
+        gscImpr: gCurr.impressions,
+        gscPos: Math.round((gCurr.position||0)*10)/10,
+        gscClicksPrev: gPrev.clicks,
+        gscImprPrev: gPrev.impressions,
+        gscPosPrev: Math.round((gPrev.position||0)*10)/10,
+        organicUsers: orgUsers,
+        organicUsersPrev: orgUsersPrev,
+        organicSessions: orgSessions,
+        organicSessionsPrev: orgSessionsPrev,
+        status
+      } as Row
+    }))
+  }
+
   const load = async (prevRows?: Row[]) => {
     setLoading(true)
     try{
@@ -224,42 +284,7 @@ export default function ClientsDashboard(){
       const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate()-(days-1))
       const pStart = fmtDateISO(prevStart); const pEnd = fmtDateISO(prevEnd)
 
-      const out: Row[] = []
-      for(const w of sites){
-        const integ = loadIntegrations(w.id)
-        const gscSite = integ.gscSite
-        const ga4Prop = integ.ga4Property
-
-        let gCurr = { clicks:0, impressions:0, position:0, rows:0 }
-        let gPrev = { clicks:0, impressions:0, position:0, rows:0 }
-        if(gscSite){
-          try{ gCurr = await fetchGscTotals(gscSite, start, end, w.name||w.url) }catch{}
-          try{ gPrev = await fetchGscTotals(gscSite, pStart, pEnd, w.name||w.url) }catch{}
-        }
-
-        let orgSessions = 0, orgSessionsPrev = 0
-        let orgUsers = 0, orgUsersPrev = 0
-        if(ga4Prop){
-          try{ orgSessions = await fetchGa4OrganicSessions(ga4Prop, start, end, w.name||w.url) }catch{}
-          try{ orgSessionsPrev = await fetchGa4OrganicSessions(ga4Prop, pStart, pEnd, w.name||w.url) }catch{}
-          try{ orgUsers = await fetchGa4OrganicUsers(ga4Prop, start, end, w.name||w.url) }catch{}
-          try{ orgUsersPrev = await fetchGa4OrganicUsers(ga4Prop, pStart, pEnd, w.name||w.url) }catch{}
-        }
-
-        const status = decideStatus(
-          { clicks: gCurr.clicks, impressions: gCurr.impressions },
-          { clicks: gPrev.clicks, impressions: gPrev.impressions }
-        )
-
-        out.push({
-          id: w.id, name: w.name, url: w.url,
-          gscClicks: gCurr.clicks, gscImpr: gCurr.impressions, gscPos: Math.round((gCurr.position||0)*10)/10,
-          gscClicksPrev: gPrev.clicks, gscImprPrev: gPrev.impressions, gscPosPrev: Math.round((gPrev.position||0)*10)/10,
-          organicUsers: orgUsers, organicUsersPrev: orgUsersPrev,
-          organicSessions: orgSessions, organicSessionsPrev: orgSessionsPrev,
-          status
-        })
-      }
+      const out = await buildRows(start, end, pStart, pEnd)
       // Merge with previous rows per site to avoid wiping data when API returns zero/empty
       const basePrev = (prevRows && prevRows.length)? prevRows : (readSnapshot(rangeKey)?.rows||[])
       const prevMap = new Map((basePrev||[]).map((r:any)=> [r.id, r]))
@@ -306,47 +331,22 @@ export default function ClientsDashboard(){
         const prevEnd = new Date(range.from); prevEnd.setDate(prevEnd.getDate()-1)
         const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate()-(days-1))
         const pStart = fmtDateISO(prevStart); const pEnd = fmtDateISO(prevEnd)
-        const out: Row[] = []
-        for(const w of sites){
-          const integ = loadIntegrations(w.id)
-          const gscSite = integ.gscSite
-          const ga4Prop = integ.ga4Property
-          let gCurr = { clicks:0, impressions:0, position:0, rows:0 }
-          let gPrev = { clicks:0, impressions:0, position:0, rows:0 }
-          if(gscSite){
-            try{ gCurr = await fetchGscTotals(gscSite, start, end) }catch{}
-            try{ gPrev = await fetchGscTotals(gscSite, pStart, pEnd) }catch{}
-          }
-          let orgSessions = 0, orgSessionsPrev = 0
-          let orgUsers = 0, orgUsersPrev = 0
-          if(ga4Prop){
-            try{ orgSessions = await fetchGa4OrganicSessions(ga4Prop, start, end) }catch{}
-            try{ orgSessionsPrev = await fetchGa4OrganicSessions(ga4Prop, pStart, pEnd) }catch{}
-            try{ orgUsers = await fetchGa4OrganicUsers(ga4Prop, start, end) }catch{}
-            try{ orgUsersPrev = await fetchGa4OrganicUsers(ga4Prop, pStart, pEnd) }catch{}
-          }
-          const status = decideStatus(
-            { clicks: gCurr.clicks, impressions: gCurr.impressions },
-            { clicks: gPrev.clicks, impressions: gPrev.impressions }
-          )
-          out.push({
-            id: w.id, name: w.name, url: w.url,
-            gscClicks: gCurr.clicks, gscImpr: gCurr.impressions, gscPos: Math.round((gCurr.position||0)*10)/10,
-            gscClicksPrev: gPrev.clicks, gscImprPrev: gPrev.impressions, gscPosPrev: Math.round((gPrev.position||0)*10)/10,
-            organicUsers: orgUsers, organicUsersPrev: orgUsersPrev,
-            organicSessions: orgSessions, organicSessionsPrev: orgSessionsPrev,
-            status
-          })
-        }
-        // Compare or TTL; avoid overwriting with empty/zero data
+        const out = await buildRows(start, end, pStart, pEnd)
         const ttlExpired = !snap.ts || (Date.now() - snap.ts) > SNAP_TTL_MS
         const changed = JSON.stringify(out) !== JSON.stringify(snap.rows||[])
         const hasSignal = out.some(r=> (r.gscClicks||0)>0 || (r.gscImpr||0)>0 )
-        if((ttlExpired || changed) && hasSignal){ setPendingRows(out); setUpdateReady(true) }
-        else { const now = Date.now(); setSnapshotTs(now); writeSnapshot(rangeKey, { ts: now, rows: snap.rows }) }
+        if((ttlExpired || changed) && hasSignal){
+          if(autoApply){
+            const now = Date.now(); setRows(out); setSnapshotTs(now); writeSnapshot(rangeKey, { ts: now, rows: out })
+          }else{
+            setPendingRows(out); setUpdateReady(true)
+          }
+        } else {
+          const now = Date.now(); setSnapshotTs(now); writeSnapshot(rangeKey, { ts: now, rows: snap.rows })
+        }
       }catch{}
     })()
-  }, [range.from, range.to, rangeKey, sites.length])
+  }, [range.from, range.to, rangeKey, sites.length, autoApply])
 
   const applyRefresh = () => {
     if(pendingRows){ const now = Date.now(); setRows(pendingRows); writeSnapshot(rangeKey, { ts: now, rows: pendingRows }); setSnapshotTs(now) }
