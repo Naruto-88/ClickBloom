@@ -21,10 +21,10 @@ coverage/
 web-data/
 
 # Local temp files in web/
-web/__*.txt
+web/__*
 web/_snippet.txt
-web/temp_*.txt
-web/tmp*.txt
+web/temp_*
+web/tmp*
 
 # Duplicate tree (should not be committed)
 web/web/

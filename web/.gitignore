@@ -1,21 +1,23 @@
-node_modules
-.next
-.turbo
-out
-dist
-coverage
+﻿# Global ignores
+node_modules/
 *.log
 *.tsbuildinfo
-
-# Local env and secrets
-.env
-.env.*
-!.env.example
-
-# OS/editor files
 .DS_Store
 Thumbs.db
 *.swp
+
+# Next.js / build outputs
+.next/
+.next-*/
+.turbo
+out/
+dist/
+coverage/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
 
 # App data
 web-data/
