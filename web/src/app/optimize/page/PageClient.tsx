@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import WebsitePicker from '@/components/dashboard/WebsitePicker'
 import type { DateRange } from '@/components/ui/RangeDropdown'
@@ -13,6 +13,11 @@ function gscSiteUrl(id?:string){ if(!id) return undefined; try{ return JSON.pars
 function fromB64(s:string){ try{ return atob(s) }catch{ return decodeURIComponent(s) } }
 function capitalize(s:string){ return s? s.charAt(0).toUpperCase()+s.slice(1) : s }
 function trimBrand(t:string){ if(!t) return ''; const parts=t.split('|').map(s=>s.trim()); return parts[parts.length-1] || t }
+
+const formatDate = (d: Date) => d.toISOString().slice(0, 10)
+const toQueryString = (params: Record<string, unknown>) => Object.entries(params)
+  .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+  .join('&')
 
 export default function PageClient(){
   const params = useSearchParams(); const router = useRouter()
@@ -49,11 +54,11 @@ export default function PageClient(){
   const [metaApplyBusy, setMetaApplyBusy] = useState(false)
   const [schemaApplyBusy, setSchemaApplyBusy] = useState(false)
   const [toasts, setToasts] = useState<Array<{id:number,type:'ok'|'err',text:string}>>([])
-  const showToast = (text:string, type:'ok'|'err'='ok')=>{
+  const showToast = useCallback((text:string, type:'ok'|'err'='ok')=>{
     const id = Date.now()+Math.floor(Math.random()*1000)
     setToasts(t=> [...t, {id, type, text}])
-    setTimeout(()=> setToasts(t=> t.filter(x=> x.id!==id)), 3000)
-  }
+    window.setTimeout(()=> setToasts(t=> t.filter(x=> x.id!==id)), 3000)
+  }, [])
   const [imgBusy, setImgBusy] = useState<Record<string, boolean>>({})
   const [imgAlts, setImgAlts] = useState<Record<string,string>>({})
   const [imgKw, setImgKw] = useState<Record<string,string>>({})
@@ -76,8 +81,6 @@ export default function PageClient(){
   const [previewHtml, setPreviewHtml] = useState('')
 
   const siteUrl = gscSiteUrl(siteId)
-  const fmt = (d:Date)=> d.toISOString().slice(0,10)
-  const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
 
   useEffect(()=>{
     // Load crawled pages for this site if available
@@ -109,7 +112,7 @@ export default function PageClient(){
       let start = new Date(range.from); let end = new Date(range.to)
       const y = new Date(); y.setDate(y.getDate()-1)
       if(end>y) end = y
-      const res = await fetch(`/api/google/gsc/page?${qs({ site: siteUrl, page: url, start: fmt(start), end: fmt(end), dimension: 'date', rowLimit: 10000 })}`)
+      const res = await fetch(`/api/google/gsc/page?${toQueryString({ site: siteUrl, page: url, start: formatDate(start), end: formatDate(end), dimension: 'date', rowLimit: 10000 })}`)
       let data: any = {}
       if(!res.ok){
         const txt = await res.text().catch(()=> '')
@@ -155,7 +158,7 @@ export default function PageClient(){
     if(end>y) end = y
     setQueriesLoading(true)
     try{
-      const res = await fetch(`/api/google/gsc/page?${qs({ site: siteUrl, page: url, start: fmt(start), end: fmt(end), dimension: 'query', rowLimit: 100 })}`)
+      const res = await fetch(`/api/google/gsc/page?${toQueryString({ site: siteUrl, page: url, start: formatDate(start), end: formatDate(end), dimension: 'query', rowLimit: 100 })}`)
       let data: any = {}
       if(!res.ok){ const txt = await res.text().catch(()=> ''); console.warn('GSC query fetch error', res.status, txt); setQueries([]); return }
       try{ data = await res.json() }catch{ const txt = await res.text().catch(()=> ''); console.warn('GSC query non-JSON', txt); data = {} }
