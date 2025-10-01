@@ -33,15 +33,16 @@ export default function RangeDropdown({ value, onChange }: { value: DateRange, o
         <span>{toLabel(value)}</span>
       </div>
       {open && (
-        <div style={{position:'absolute', right:0, top:'110%', background:'#0f0f20', border:'1px solid #2b2b47', borderRadius:10, minWidth:240, zIndex:50, padding:8}}>
+        <div style={{position:'absolute', right:0, top:'110%', background:'var(--menu-bg)', border:'1px solid var(--menu-border)', borderRadius:10, minWidth:240, zIndex:50, padding:8}}>
           {presets.map(p=> (
             <div key={p.key} onClick={()=>{ onChange(p.range); setOpen(false) }} style={{padding:'8px 10px', cursor:'pointer', borderRadius:8}}>{p.label}</div>
           ))}
-          <div onClick={()=>{ setShowCustom(true); }} style={{padding:'8px 10px', cursor:'pointer', borderRadius:8, borderTop:'1px solid #2b2b47', marginTop:4}}>Custom…</div>
+          <div onClick={()=>{ setShowCustom(true); }} style={{padding:'8px 10px', cursor:'pointer', borderRadius:8, borderTop:'1px solid var(--menu-border)', marginTop:4}}>Custom…</div>
         </div>
       )}
       <RangePicker open={showCustom} onClose={()=>setShowCustom(false)} value={value} onApply={(r)=>{ onChange(r); setShowCustom(false); setOpen(false) }} />
     </div>
   )
 }
+
 

@@ -4,6 +4,7 @@ import SiteSettingsModal from "@/components/dashboard/SiteSettingsModal"
 import Modal from "@/components/ui/Modal"
 import SelectModal from "@/components/ui/SelectModal"
 import { useEffect, useMemo, useState, FormEvent } from "react"
+import { useSession } from "next-auth/react"
 import { signIn } from "next-auth/react"
 
 type Integration = { gscSite?: string, gscLabel?: string, ga4Property?: string, ga4Label?: string, wpEndpoint?: string, wpToken?: string }
@@ -15,6 +16,7 @@ function loadIntegrations(id?: string): Integration{ if(!id) return {}; try{ ret
 function saveIntegrations(id: string, data: Integration){ localStorage.setItem('integrations:'+id, JSON.stringify(data)) }
 
 export default function WebsitesClient(){
+  const { data: session } = useSession()
   const [sites, setSites] = useState<Website[]>([])
   const [activeId, setActiveId] = useState<string|undefined>()
   const [openAdd, setOpenAdd] = useState(false)
@@ -44,6 +46,7 @@ export default function WebsitesClient(){
 
   const active = useMemo(()=> sites.find(x=>x.id===activeId), [sites, activeId])
   const integ = useMemo(()=> loadIntegrations(activeId), [activeId, integVer])
+  const activeSite = useMemo(()=> sites.find(s=>s.id===activeId), [sites, activeId])
   // AI Provider UI moved to topbar; keep integrations only for Google/WordPress.
   useEffect(()=>{ setKeyInput(integ.wpToken||''); if(integ.wpToken){
     // Load remaining credits for display
@@ -77,6 +80,14 @@ export default function WebsitesClient(){
   }, [sites])
 
   const addWebsite = (w: Website) => { const next = [...sites, w]; setSites(next); saveSites(next); setActiveId(w.id); setOpenAdd(false); if(autoGoogle){ setTimeout(()=> autoConnectGoogle(w.id).catch(()=>{}), 0) } }
+  // Push registry to server on sites change (best-effort)
+  useEffect(()=>{ try{ const email = (document?.cookie||'').includes('next-auth.session-token')? (undefined) : undefined; }catch{} }, [])
+  // push registry with ownerEmail for plan enforcement and cron prewarm
+  useEffect(()=>{
+    const email = (session as any)?.user?.email as string|undefined
+    const payload = sites.map(s=> ({ id: s.id, name: s.name, url: s.url, ownerEmail: email }))
+    try{ fetch('/api/registry/sites', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ sites: payload }) }) }catch{}
+  }, [sites, session])
   useEffect(()=>{ if(autoGoogle && activeId){ const integ = loadIntegrations(activeId); if(!(integ.gscSite || integ.ga4Property)) autoConnectGoogle(activeId).catch(()=>{}) } }, [activeId, autoGoogle])
 
   const parseImportLines = (text: string): Website[] => {
@@ -253,22 +264,7 @@ export default function WebsitesClient(){
               if(exact){ best = { name: exact.property||exact.name, label: exact.displayName|| (exact.property||exact.name) } }
             }
           }
-          // 3) Fallback: probe each property via GA4 Data API for host presence
-          if(!best && props.length){
-            try{
-              const today = new Date(); const y=new Date(today); y.setDate(today.getDate()-1); const start=new Date(y); start.setDate(y.getDate()-27)
-              const fmt=(d:Date)=> d.toISOString().slice(0,10)
-              for(const p of props){
-                const name = p.property || p.name
-                if(!name) continue
-                const r = await fetch('/api/google/ga4/report', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: name, start: fmt(start), end: fmt(y) }) })
-                if(!r.ok) continue
-                const j2 = await r.json(); const rows:any[] = j2.rows||[]
-                const found = rows.some((row:any)=> String(row.dimensionValues?.[0]?.value||'').toLowerCase().includes(host))
-                if(found){ best = { name, label: p.displayName||name }; break }
-              }
-            }catch{}
-          }
+          // 3) Skip expensive GA4 Data probe to keep auto-connect fast; choose first matching displayName or default to first
           // 4) Fallback: only one property available
           if(!best && props.length===1){ const p = props[0]; best = { name: p.property||p.name, label: p.displayName|| (p.property||p.name) } }
           if(best){ saveIntegrations(id, { ...loadIntegrations(id), ga4Property: best.name, ga4Label: best.label }); setIntegVer(v=>v+1) }
@@ -401,7 +397,7 @@ export default function WebsitesClient(){
  
       {/* Integration modal */}
       <Modal open={openInteg} onClose={()=>setOpenInteg(false)}>
-        <h3>Integrations</h3>
+        <h3>{activeSite? `${activeSite.name} – Integrations` : 'Integrations'}</h3>
         <div style={{display:'grid', gap:12}}>
           {/* GSC */}
           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>

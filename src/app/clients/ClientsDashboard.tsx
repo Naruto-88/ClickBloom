@@ -599,7 +599,7 @@ export default function ClientsDashboard(){
             )}
           </div>
         </div>
-        <div className="clients-grid cols" style={{padding:'6px 8px', borderBottom:'1px solid #23233a'}}> 
+        <div className="clients-grid cols" style={{padding:'6px 8px', borderBottom:'1px solid var(--border)'}}> 
           <div style={{opacity:.8}}>Client</div>
           <button className="th" onClick={()=>{ setSortBy('clicks'); setSortDir(sortBy==='clicks' && sortDir==='desc' ? 'asc':'desc') }}>
             GSC Clicks <span className="caret">{sortBy==='clicks' ? (sortDir==='desc'?'▼':'▲') : ''}</span>
@@ -619,7 +619,6 @@ export default function ClientsDashboard(){
           <div style={{opacity:.8, textAlign:'center'}}>Actions</div>
         </div>
         {sorted.map(r=>{
-          const stColor = r.status==='bad'? '#ef4444' : r.status==='warn'? '#f59e0b' : '#10b981'
           const isHi = highlightId===r.id
           return (
             <div key={r.id} className="clients-grid cols" style={{
@@ -627,7 +626,7 @@ export default function ClientsDashboard(){
                 background: isHi? '#121228' : '#0f0f20', outline: isHi? '2px solid var(--accent)' : undefined
               }}>
               <div className="client-cell" style={{display:'flex', alignItems:'center', gap:10, minWidth:0}}>
-                <span style={{width:8,height:8,borderRadius:999,background:stColor, boxShadow:'0 0 10px rgba(0,0,0,.3)'}}/>
+                <span className={`status-dot ${r.status}`} />
                 <div style={{minWidth:0}}>
                   <div style={{fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{r.name}</div>
                   <div className="muted" style={{fontSize:12, overflowWrap:'anywhere'}}>{r.url}</div>
@@ -774,19 +773,22 @@ export default function ClientsDashboard(){
 
       <style jsx global>{`
         @keyframes blink { 50% { opacity: .35 } }
-        .icon-btn{ width:28px; height:28px; display:grid; place-items:center; border-radius:8px; border:1px solid #2b2b47; background:#121228; color: var(--accent); cursor:pointer; }
-        .icon-btn:hover{ filter: brightness(1.1); }
+        .icon-btn{ width:28px; height:28px; display:grid; place-items:center; border-radius:8px; border:1px solid var(--border); background:#ffffff; color: var(--accent); cursor:pointer; }
+        .icon-btn:hover{ background:#f3f4f6 }
         .clients-grid{ display:grid; gap:8px; align-items:center; }
         .clients-grid.cols{ grid-template-columns: minmax(280px, 2fr) repeat(3, minmax(130px, 1fr)) minmax(130px, 1fr) minmax(130px, 1fr) 72px; }
         @media (max-width: 1200px){ .clients-grid.cols{ grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 1fr)) minmax(120px, 1fr) minmax(120px, 1fr) 68px } }
         @media (max-width: 1000px){ .clients-grid.cols{ grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(110px, 1fr)) minmax(110px, 1fr) minmax(110px, 1fr) 64px } }
         @media (max-width: 860px){ .clients-grid.cols{ grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(100px, 1fr)) minmax(100px, 1fr) minmax(100px, 1fr) 60px } }
-        /* Styled selects for dark theme */
-        .sel{ height:32px; border-radius:8px; border:1px solid #2b2b47; background:#121228; color:#e6e6f0; padding:0 8px; }
-        .sel option{ background:#0f0f20; color:#e6e6f0; }
-        .th{ background:transparent; color:#cbd0ea; border:0; text-align:left; padding:0; cursor:pointer; font:inherit; display:inline-flex; align-items:center; gap:6px; }
+        .sel{ height:32px; border-radius:8px; border:1px solid var(--border); background:#ffffff; color:#111827; padding:0 8px; }
+        .sel option{ background:#ffffff; color:#111827; }
+        .th{ background:transparent; color:#374151; border:0; text-align:left; padding:0; cursor:pointer; font:inherit; display:inline-flex; align-items:center; gap:6px; }
         .th .caret{ opacity:.8; }
-        .sticky-wrap{ position: sticky; top: 0; z-index: 30; background: linear-gradient(180deg, rgba(15,15,32,0.98) 0%, rgba(15,15,32,0.94) 75%, rgba(15,15,32,0.0) 100%); padding-top:6px; }
+        .sticky-wrap{ position: sticky; top: 0; z-index: 30; background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.92) 75%, rgba(255,255,255,0.0) 100%); padding-top:6px; }
+        .status-dot{ width:8px; height:8px; border-radius:999px; display:inline-block; }
+        .status-dot.good{ background: var(--success) }
+        .status-dot.warn{ background: var(--warning) }
+        .status-dot.bad{ background: var(--danger) }
       `}</style>
     </>
   )

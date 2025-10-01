@@ -699,9 +699,10 @@ export default function PageClient(){
                 setTitlesBusy(true)
                 const payload: any = { url }
                 const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
-                const out = await res.json()
+                const aic = getAiConfig();
+                if(aic){ payload.apiKey = aic.apiKey; if(aic.model) payload.model = aic.model }
+                const r = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                const out = await r.json()
                 if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate titles') }
               }catch(e:any){ alert(e?.message || 'Failed to generate') }
               finally{ setTitlesBusy(false) }
@@ -709,18 +710,23 @@ export default function PageClient(){
             <button className="btn" style={{display: activeTab==='description'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setMetaBusy(true)
-                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                const res = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
-                const out = await res.json();
+                const aic = getAiConfig();
+                const body:any = { url, keywords: mainKw? [mainKw]: [] }
+                if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                const r = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
+                const out = await r.json();
                 if(out?.ok){ if(!(keepEdits && metaEdited)) setProposedMeta(out.meta); await applyMeta(out.meta) } else { alert(out?.error||'Generate failed') }
               } finally{ setMetaBusy(false) }
             }}>{metaBusy? <span className="spinner"/> : 'Auto Optimize Meta Description'}</button>
             <button className="btn" style={{display: activeTab==='schema'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setSchemaBusy(true)
-                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
-                const out = await r.json(); if(out?.ok){ if(!(keepEdits && schemaEdited)) setProposedSchema(out.schema); await applySchema(out.schema) } else { alert(out?.error||'Generate failed') }
+                const aic = getAiConfig()
+                const body:any = { url, keywords: mainKw? [mainKw]: [] }
+                if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
+                const out = await r.json();
+                if(out?.ok){ if(!(keepEdits && schemaEdited)) setProposedSchema(out.schema); await applySchema(out.schema) } else { alert(out?.error||'Generate failed') }
               } finally{ setSchemaBusy(false) }
             }}>{schemaBusy? <span className="spinner"/> : 'Auto Schema Markup Generation'}</button>
             {/* Explicit post title ideas generator */}
@@ -754,24 +760,24 @@ export default function PageClient(){
                   setTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
-                  const out = await res.json().catch(()=>null)
+                  const aic = getAiConfig(); if(aic){ payload.apiKey = aic.apiKey; if(aic.model) payload.model = aic.model }
+                  const r = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  const out = await r.json().catch(()=>null)
                   if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true); setShowPostList(true); setShowMetaList(false) } else { alert(out?.error||'Failed to generate titles') }
                 } finally{ setTitlesBusy(false) }
-              }}>{titlesBusy? <><span className="spinner"/> Generating.</> : 'Generate Post Titles'}</button>
+              }}>{titlesBusy? <><span className="spinner"/> Generating…</> : 'Generate Post Titles'}</button>
 
               <button className="btn secondary" disabled={seoTitlesBusy} onClick={async()=>{
                 try{
                   setSeoTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
-                  const out = await res.json().catch(()=>null)
+                  const aic = getAiConfig(); if(aic){ payload.apiKey = aic.apiKey; if(aic.model) payload.model = aic.model }
+                  const r = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
+                  const out = await r.json().catch(()=>null)
                   if(out?.ok){ setSeoIdeas(out.ideas||[]); setShowIdeas(true); setShowMetaList(true); setShowPostList(false) } else { alert(out?.error||'Failed to generate SEO titles') }
                 } finally{ setSeoTitlesBusy(false) }
-              }}>{seoTitlesBusy? <><span className="spinner"/> Generating.</> : 'Generate Meta Titles'}</button>
+              }}>{seoTitlesBusy? <><span className="spinner"/> Generating…</> : 'Generate Meta Titles'}</button>
               <button className="btn secondary" disabled={bothBusy || titlesBusy || seoTitlesBusy} onClick={async()=>{
                 try{
                   setBothBusy(true); setTitlesBusy(true); setSeoTitlesBusy(true)
@@ -1017,8 +1023,10 @@ export default function PageClient(){
               <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center', marginTop:10}}>
                 <input className="input" placeholder="Main keyword (optional)" value={mainKw} onChange={e=>setMainKw(e.target.value)} />
                 <button className="btn" onClick={async()=>{
-                  { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
+                  const aic = getAiConfig();
+                  const body:any = { url, keywords: mainKw? [mainKw]: [] };
+                  if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
                   const out = await r.json(); if(out?.ok){ setProposedSchema(out.schema) } else { alert(out?.error||'Generate failed') }
                 }}>Generate JSON-LD</button>
               </div>

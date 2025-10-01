@@ -24,4 +24,39 @@ Routes
 - `/login` — Google sign in and optional guest access.
 - `/dashboard` — Protected dashboard.
 - `/optimize`, `/performance`, `/keywords`, `/audit`, `/reports`, `/websites` — main sections.
+## SQL cache (local + cPanel)
+
+This repo now supports MySQL/MariaDB for caching snapshots and generic key/value data used by the app.
+
+### Local (Docker)
+
+1. `docker-compose up -d`
+2. Set env (in `.env.local`):
+
+```
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=clickbloom
+MYSQL_USER=clickbloom
+MYSQL_PASSWORD=clickbloom
+```
+
+3. Run migration:
+
+```
+cd web
+npm run db:migrate
+```
+
+4. Start the app (`npm run dev`), the `/api/cache/clients` route now reads/writes to MySQL.
+
+### cPanel
+
+- Create a MySQL database and user; copy credentials to `.env.local` (or your hosting env editor).
+- Upload `web/db/schema.sql` to run once, or use `npm run db:migrate` if Node is available on the host.
+
+### What uses SQL
+
+- `/api/cache/clients` will prefer MySQL; falls back to Upstash (if configured) or in‑memory.
+- Table `kv_cache` stores JSON values with optional TTL.
 

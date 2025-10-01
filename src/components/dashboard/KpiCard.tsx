@@ -40,7 +40,12 @@ export default function KpiCard({ title, current, previous, format, color, inver
     // background fade
     const grad = ctx.createLinearGradient(0,0,0,h)
     grad.addColorStop(0, color + '55')
-    grad.addColorStop(1, '#0b0b16')
+    try{
+      const card = getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || '#ffffff'
+      grad.addColorStop(1, card)
+    }catch{
+      grad.addColorStop(1, '#ffffff')
+    }
     ctx.fillStyle = grad
     ctx.beginPath()
     series.forEach((v,i)=>{ const x=xs(i); const y=ys(v); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y) })

@@ -6,11 +6,17 @@ export type Point = { date: string; clicks: number; impressions: number; ctr: nu
 type Active = { clicks: boolean; impressions: boolean; ctr: boolean; position: boolean }
 
 function draw(ctx: CanvasRenderingContext2D, data: Point[], active: Active, hoverIndex: number | null){
+  const cssVar = (name: string, fallback: string) => {
+    try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback }catch{ return fallback }
+  }
+  const border = cssVar('--border', '#e5e7eb')
+  const card = cssVar('--card', '#ffffff')
+  const muted = cssVar('--muted', '#6b7280')
   const w = ctx.canvas.width, h = ctx.canvas.height
   const pad = 34
   ctx.clearRect(0,0,w,h)
   // grid
-  ctx.strokeStyle = '#232343'; ctx.lineWidth = 1
+  ctx.strokeStyle = border; ctx.lineWidth = 1
   for(let i=0;i<5;i++){ const y = pad + (i*(h-pad*2))/4; ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(w-pad,y); ctx.stroke() }
   const xs = (i:number)=> pad + (i*(w-pad*2))/(data.length-1)
   const val = (v:number,min:number,max:number)=> h-pad - ((v-min)/(max-min||1e-6))*(h-pad*2)
@@ -29,7 +35,7 @@ function draw(ctx: CanvasRenderingContext2D, data: Point[], active: Active, hove
     // optional area fill (for clicks)
     if(opts?.fill){
       const grad = ctx.createLinearGradient(0,pad,0,h-pad)
-      grad.addColorStop(0, color+'55'); grad.addColorStop(1, '#0b0b16')
+      grad.addColorStop(0, color+'55'); grad.addColorStop(1, card)
       ctx.fillStyle = grad
       ctx.beginPath()
       for(let i=0;i<values.length;i++){
@@ -55,7 +61,7 @@ function draw(ctx: CanvasRenderingContext2D, data: Point[], active: Active, hove
     }
     ctx.stroke(); ctx.setLineDash([])
     // markers
-    values.forEach((v,i)=>{ const x=xs(i), y=val(v, min, max); ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.stroke() })
+    values.forEach((v,i)=>{ const x=xs(i), y=val(v, min, max); ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=card; ctx.lineWidth=1; ctx.stroke() })
   }
 
   if(active.clicks) lineSmooth(data.map(d=>d.clicks),'#a78bfa',{fill:true}) // purple with area
@@ -64,7 +70,7 @@ function draw(ctx: CanvasRenderingContext2D, data: Point[], active: Active, hove
   if(active.position) lineSmooth(data.map(d=>d.position),'#fbbf24',{dashed:true}) // dashed yellow
 
   // X-axis labels (dates)
-  ctx.fillStyle = '#a3a6c2'
+  ctx.fillStyle = muted
   ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto'
   ctx.textAlign = 'center'
   const n = data.length
@@ -81,7 +87,7 @@ function draw(ctx: CanvasRenderingContext2D, data: Point[], active: Active, hove
   // Hover vertical line
   if(hoverIndex!==null && hoverIndex>=0 && hoverIndex<data.length){
     const x = xs(hoverIndex)
-    ctx.strokeStyle = '#3b3b5e'
+    ctx.strokeStyle = border
     ctx.lineWidth = 1
     ctx.setLineDash([4,4])
     ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, h-pad); ctx.stroke();
@@ -126,13 +132,13 @@ export default function PerformancePanel({ points, hideCtr=false }: { points: Po
           <span className={`item ${active.position? '':'off'}`} onClick={()=>toggle('position')} style={{color: active.position? '#fbbf24' : undefined}}><span className="dot" style={{background:'#fbbf24'}}/>Average Position</span>
         </div>
       </div>
-      <div className="chart" style={{height:340, position:'relative'}}>
-        <canvas ref={canvas} width={820} height={260} onMouseMove={onMove} onMouseLeave={onLeave} />
+      <div className="chart" style={{height:420, position:'relative', display:'grid', placeItems:'center'}}>
+        <canvas ref={canvas} width={900} height={300} style={{display:'block'}} onMouseMove={onMove} onMouseLeave={onLeave} />
         {(!points || points.length===0) && (
           <div className="muted" style={{position:'absolute', inset:0, display:'grid', placeItems:'center'}}>No data for selected period</div>
         )}
         {hoverIndex!==null && points[hoverIndex] && (
-          <div style={{position:'absolute', top:12, left:`calc(34px + ${(hoverIndex/(Math.max(1,points.length-1)))*100}% - 120px)`, background:'#141428', border:'1px solid #2b2b47', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
+          <div style={{position:'absolute', top:12, left:`calc(34px + ${(hoverIndex/(Math.max(1,points.length-1)))*100}% - 120px)`, background:'var(--menu-bg)', border:'1px solid var(--menu-border)', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
             <div style={{fontWeight:700, marginBottom:4}}>{points[hoverIndex].date}</div>
             {active.clicks && <div>Clicks: <strong>{points[hoverIndex].clicks}</strong></div>}
             {active.impressions && <div>Impressions: <strong>{points[hoverIndex].impressions}</strong></div>}

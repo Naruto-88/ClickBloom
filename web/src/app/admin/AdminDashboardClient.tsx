@@ -32,6 +32,7 @@ export default function AdminDashboardClient(){
   const [state, setState] = useState<LoadState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [plans, setPlans] = useState<Record<string, string>>({})
 
   const load = async()=>{
     setState('loading')
@@ -44,6 +45,15 @@ export default function AdminDashboardClient(){
       const data = await res.json()
       setUsers(Array.isArray(data?.users) ? data.users : [])
       setState('idle')
+      // Load plans for each user
+      try{
+        const emails: string[] = (Array.isArray(data?.users)? data.users:[]).map((u:any)=>u.email)
+        const next: Record<string,string> = {}
+        await Promise.all(emails.map(async(email)=>{
+          try{ const r = await fetch('/api/admin/plan?email='+encodeURIComponent(email)); const j= await r.json(); if(j?.plan?.name) next[email]=j.plan.name }catch{}
+        }))
+        setPlans(next)
+      }catch{}
     }catch(err:any){
       setError(err?.message || 'Failed to load users')
       setState('error')
@@ -123,6 +133,7 @@ export default function AdminDashboardClient(){
                 <th style={{padding:'8px 12px'}}>Last Login</th>
                 <th style={{padding:'8px 12px'}}>Created</th>
                 <th style={{padding:'8px 12px'}}>Blocked</th>
+                <th style={{padding:'8px 12px'}}>Plan</th>
                 <th style={{padding:'8px 12px'}}>Actions</th>
               </tr>
             </thead>
@@ -149,6 +160,17 @@ export default function AdminDashboardClient(){
                           {user.blockedBy && <span className="muted" style={{fontSize:12}}>by {user.blockedBy}</span>}
                         </div>
                       ) : '-'}
+                    </td>
+                    <td style={{padding:'10px 12px'}}>
+                      <select className="input" value={plans[user.email]||'basic'} onChange={async(e)=>{
+                        const name = e.target.value
+                        setPlans(prev=> ({ ...prev, [user.email]: name }))
+                        try{ await fetch('/api/admin/plan', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ email: user.email, plan: name }) }) }catch{}
+                      }} style={{height:32}}>
+                        <option value="basic">basic</option>
+                        <option value="pro">pro</option>
+                        <option value="agency">agency</option>
+                      </select>
                     </td>
                     <td style={{padding:'10px 12px'}}>
                       <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>

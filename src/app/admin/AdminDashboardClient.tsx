@@ -129,7 +129,7 @@ export default function AdminDashboardClient(){
             <tbody>
               {users.map(user => {
                 const key = user.email
-                const isSelf = currentEmail && currentEmail.toLowerCase() === user.email.toLowerCase()
+                const isSelf = Boolean(currentEmail && currentEmail.toLowerCase() === user.email.toLowerCase())
                 const blocking = busyKey === `block:${key}`
                 const unblocking = busyKey === `unblock:${key}`
                 const deleting = busyKey === `delete:${key}`
@@ -156,7 +156,7 @@ export default function AdminDashboardClient(){
                           <button
                             className="btn secondary"
                             onClick={()=> runAction('block', user.email)}
-                            disabled={blocking || deleting || isSelf}
+                            disabled={Boolean(blocking || deleting || isSelf)}
                             style={{opacity: isSelf? 0.5:1}}
                           >
                             {blocking ? 'Blocking...' : 'Block'}
@@ -173,7 +173,7 @@ export default function AdminDashboardClient(){
                         <button
                           className="btn secondary"
                           onClick={()=> runAction('delete', user.email)}
-                          disabled={deleting || isSelf}
+                          disabled={Boolean(deleting || isSelf)}
                           style={{opacity: isSelf? 0.5:1}}
                         >
                           {deleting ? 'Removing...' : 'Remove'}
@@ -195,7 +195,7 @@ export default function AdminDashboardClient(){
       </section>
 
       <section className="muted" style={{fontSize:13}}>
-        Need to manage licenses? Head to <a href="/admin/licenses" className="link">Admin -> Licenses</a>.
+        Need to manage licenses? Head to <a href="/admin/licenses" className="link">Admin → Licenses</a>.
       </section>
     </div>
   )

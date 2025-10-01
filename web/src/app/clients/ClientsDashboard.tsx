@@ -154,8 +154,8 @@ export default function ClientsDashboard(){
   const writeSnapshot = (key:string, data: { ts:number, rows: Row[] })=>{ try{ localStorage.setItem(snapKey(key), JSON.stringify({ ...data, ver: SNAP_VER })) }catch{} }
   const relTime = (ts:number)=>{ const d=Math.max(0, Date.now()-ts); const s=Math.floor(d/1000); if(s<60) return `${s}s ago`; const m=Math.floor(s/60); if(m<60) return `${m}m ago`; const h=Math.floor(m/60); if(h<24) return `${h}h ago`; const dy=Math.floor(h/24); return `${dy}d ago` }
 
-  async function fetchGscTotals(siteUrl: string, start: string, end: string, siteLabel?: string){
-    const res = await fetch(`/api/google/gsc/search?site=${encodeURIComponent(siteUrl)}&start=${start}&end=${end}`)
+  async function fetchGscTotals(siteUrl: string, start: string, end: string, siteLabel?: string, email?: string){
+    const res = await fetch(`/api/google/gsc/search?site=${encodeURIComponent(siteUrl)}&start=${start}&end=${end}${email? `&email=${encodeURIComponent(email)}`:''}`)
     if(res.status===401 || res.status===403){
       setGscAuthNeeded(true)
       if(siteLabel) setGscAuthFailures(prev=> Array.from(new Set([...(prev||[]), siteLabel])))
@@ -170,9 +170,9 @@ export default function ClientsDashboard(){
     return { clicks, impressions, position, rows: rows.length }
   }
 
-  async function fetchGa4OrganicSessions(property: string, start: string, end: string, siteLabel?: string){
+  async function fetchGa4OrganicSessions(property: string, start: string, end: string, siteLabel?: string, email?: string){
     try{
-      const res = await fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property, start, end }) })
+      const res = await fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property, start, end, email }) })
       if(res.status===401 || res.status===403){ if(siteLabel) setGa4AuthFailures(prev=> Array.from(new Set([...(prev||[]), siteLabel]))); return 0 }
       if(!res.ok) return 0
       const data = await res.json()
@@ -186,7 +186,7 @@ export default function ClientsDashboard(){
     }catch{ return 0 }
   }
 
-  async function fetchGa4OrganicUsers(property: string, start: string, end: string, siteLabel?: string){
+  async function fetchGa4OrganicUsers(property: string, start: string, end: string, siteLabel?: string, email?: string){
     try{
       const res = await fetch('/api/google/ga4/user-acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property, start, end }) })
       if(res.status===401 || res.status===403){ if(siteLabel) setGa4AuthFailures(prev=> Array.from(new Set([...(prev||[]), siteLabel]))); return 0 }
@@ -224,42 +224,31 @@ export default function ClientsDashboard(){
       const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate()-(days-1))
       const pStart = fmtDateISO(prevStart); const pEnd = fmtDateISO(prevEnd)
 
-      const out: Row[] = []
-      for(const w of sites){
+      const email = (()=>{ try{ const s = JSON.parse((sessionStorage.getItem('next-auth-session')||'null') as any) }catch{return undefined} })?.user?.email
+      const out: Row[] = await Promise.all(sites.map(async(w)=>{
         const integ = loadIntegrations(w.id)
         const gscSite = integ.gscSite
         const ga4Prop = integ.ga4Property
-
-        let gCurr = { clicks:0, impressions:0, position:0, rows:0 }
-        let gPrev = { clicks:0, impressions:0, position:0, rows:0 }
-        if(gscSite){
-          try{ gCurr = await fetchGscTotals(gscSite, start, end, w.name||w.url) }catch{}
-          try{ gPrev = await fetchGscTotals(gscSite, pStart, pEnd, w.name||w.url) }catch{}
-        }
-
-        let orgSessions = 0, orgSessionsPrev = 0
-        let orgUsers = 0, orgUsersPrev = 0
-        if(ga4Prop){
-          try{ orgSessions = await fetchGa4OrganicSessions(ga4Prop, start, end, w.name||w.url) }catch{}
-          try{ orgSessionsPrev = await fetchGa4OrganicSessions(ga4Prop, pStart, pEnd, w.name||w.url) }catch{}
-          try{ orgUsers = await fetchGa4OrganicUsers(ga4Prop, start, end, w.name||w.url) }catch{}
-          try{ orgUsersPrev = await fetchGa4OrganicUsers(ga4Prop, pStart, pEnd, w.name||w.url) }catch{}
-        }
-
-        const status = decideStatus(
-          { clicks: gCurr.clicks, impressions: gCurr.impressions },
-          { clicks: gPrev.clicks, impressions: gPrev.impressions }
-        )
-
-        out.push({
+        const [gCurr, gPrev] = await Promise.all([
+          gscSite? fetchGscTotals(gscSite, start, end, w.name||w.url, email).catch(()=>({ clicks:0, impressions:0, position:0, rows:0 })) : Promise.resolve({ clicks:0, impressions:0, position:0, rows:0 }),
+          gscSite? fetchGscTotals(gscSite, pStart, pEnd, w.name||w.url, email).catch(()=>({ clicks:0, impressions:0, position:0, rows:0 })) : Promise.resolve({ clicks:0, impressions:0, position:0, rows:0 })
+        ])
+        const [orgSessions, orgSessionsPrev, orgUsers, orgUsersPrev] = await Promise.all([
+          ga4Prop? fetchGa4OrganicSessions(ga4Prop, start, end, w.name||w.url, email).catch(()=>0) : Promise.resolve(0),
+          ga4Prop? fetchGa4OrganicSessions(ga4Prop, pStart, pEnd, w.name||w.url, email).catch(()=>0) : Promise.resolve(0),
+          ga4Prop? fetchGa4OrganicUsers(ga4Prop, start, end, w.name||w.url, email).catch(()=>0) : Promise.resolve(0),
+          ga4Prop? fetchGa4OrganicUsers(ga4Prop, pStart, pEnd, w.name||w.url, email).catch(()=>0) : Promise.resolve(0),
+        ])
+        const status = decideStatus({ clicks: gCurr.clicks, impressions: gCurr.impressions }, { clicks: gPrev.clicks, impressions: gPrev.impressions })
+        return {
           id: w.id, name: w.name, url: w.url,
           gscClicks: gCurr.clicks, gscImpr: gCurr.impressions, gscPos: Math.round((gCurr.position||0)*10)/10,
           gscClicksPrev: gPrev.clicks, gscImprPrev: gPrev.impressions, gscPosPrev: Math.round((gPrev.position||0)*10)/10,
           organicUsers: orgUsers, organicUsersPrev: orgUsersPrev,
-          organicSessions: orgSessions, organicSessionsPrev: orgSessionsPrev,
+          organicSessions, organicSessionsPrev,
           status
-        })
-      }
+        } as Row
+      }))
       // Merge with previous rows per site to avoid wiping data when API returns zero/empty
       const basePrev = (prevRows && prevRows.length)? prevRows : (readSnapshot(rangeKey)?.rows||[])
       const prevMap = new Map((basePrev||[]).map((r:any)=> [r.id, r]))
@@ -497,9 +486,9 @@ export default function ClientsDashboard(){
         {sites.map(s=>{
           const r = rows.find(x=>x.id===s.id)
           const st = r?.status || 'warn'
-          const bg = st==='bad'? '#2a1212' : st==='warn'? '#2a1f12' : '#0b1f16'
-          const br = st==='bad'? '#432020' : st==='warn'? '#4a341f' : '#1e3d2f'
-          const color = st==='bad'? '#ff6b6b' : st==='warn'? '#fbbf24' : '#34d399'
+          const bg = st==='bad'? 'var(--err-bg)' : st==='warn'? 'var(--kw-warn-bg)' : 'var(--ok-bg)'
+          const br = st==='bad'? 'var(--err-border)' : st==='warn'? 'var(--kw-warn-border)' : 'var(--ok-border)'
+          const color = st==='bad'? 'var(--err-fg)' : st==='warn'? 'var(--kw-warn-fg)' : 'var(--ok-fg)'
           const blink = st!=='good'
           return (
             <div key={s.id} onClick={()=> setHighlightId(prev=> prev===s.id? undefined : s.id)} title={s.name}

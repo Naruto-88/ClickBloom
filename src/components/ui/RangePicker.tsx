@@ -70,7 +70,7 @@ export default function RangePicker({ open, onClose, value, onApply }: { open: b
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()} style={{width: 760}}>
         <div style={{display:'grid', gridTemplateColumns:'200px 1fr 1fr', gap:16}}>
-          <div style={{borderRight:'1px solid #2b2b47', paddingRight:10, maxHeight:340, overflow:'auto'}}>
+          <div style={{borderRight:'1px solid var(--menu-border)', paddingRight:10, maxHeight:340, overflow:'auto'}}>
             {['Today','Yesterday','Last 7 Days','Last 30 Days','This Month','Last Month','Last 90 Days'].map(p => (
               <div key={p} style={{padding:'8px 10px', cursor:'pointer', borderRadius:8}} onClick={()=>setPreset(p)} className="picker-item">{p}</div>
             ))}
@@ -82,7 +82,7 @@ export default function RangePicker({ open, onClose, value, onApply }: { open: b
               <strong>{months[left.getMonth()]} {left.getFullYear()}</strong>
               <span/>
             </div>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6, fontSize:12, color:'#9aa0b4', marginBottom:6}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6, fontSize:12, color:'var(--muted)', marginBottom:6}}>
               {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=> <div key={d} style={{textAlign:'center'}}>{d}</div>)}
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6}}>
@@ -98,7 +98,7 @@ export default function RangePicker({ open, onClose, value, onApply }: { open: b
               <strong>{months[right.getMonth()]} {right.getFullYear()}</strong>
               <button className="btn secondary" onClick={()=>{ setLeft(addMonths(left,1)); setRight(addMonths(right,1)) }}>&gt;</button>
             </div>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6, fontSize:12, color:'#9aa0b4', marginBottom:6}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6, fontSize:12, color:'var(--muted)', marginBottom:6}}>
               {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=> <div key={d} style={{textAlign:'center'}}>{d}</div>)}
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:6}}>

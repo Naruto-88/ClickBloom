@@ -4,6 +4,8 @@ import path from 'path'
 import fs from 'fs/promises'
 
 export const runtime = 'nodejs'
+// Cache the computed response for ~12 hours – data updates infrequently
+export const revalidate = 43200
 
 type Update = { title: string, type: 'core'|'spam'|'ranking'|'other', start: string, end?: string|null, url?: string }
 

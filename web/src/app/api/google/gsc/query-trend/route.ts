@@ -1,12 +1,16 @@
 import { auth } from '@/lib/auth'
+import { clampRangeByDays, getMaxDaysForEmail } from '@/lib/plan'
 
 export async function GET(req: Request){
   const { searchParams } = new URL(req.url)
   const site = searchParams.get('site')
-  const start = searchParams.get('start')
+  let start = searchParams.get('start')
   const end = searchParams.get('end')
   const query = searchParams.get('query')
+  const email = searchParams.get('email')||''
   if(!site || !start || !end || !query) return new Response('Missing params', { status: 400 })
+  const maxDays = await getMaxDaysForEmail(email||undefined)
+  start = clampRangeByDays(start, end, maxDays)
   const session = await auth()
   if(!session) return new Response('Unauthorized', { status: 401 })
   // @ts-ignore

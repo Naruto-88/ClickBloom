@@ -312,13 +312,15 @@ export async function prefetchPerformanceSnapshot(opts?: { force?: boolean }): P
         item.totals.clicks = sumRows(curRows, 'clicks')
         item.totals.impressions = sumRows(curRows, 'impressions')
         item.totals.ctr = item.totals.impressions ? (item.totals.clicks / item.totals.impressions) * 100 : 0
-        const posWeighted = rows.reduce((acc:number,row:any)=> acc + Number(row.position||0)*Number(row.impressions||0), 0)
-        item.totals.position = totImpr ? posWeighted / totImpr : 0
+        const totImpr = sumRows(curRows, 'impressions')
+        const posWeighted = curRows.reduce((acc:number,row:any)=> acc + Number(row.position||0)*Number(row.impressions||0), 0)
+        item.totals.position = totImpr ? posWeighted / Math.max(1, totImpr) : 0
         item.prev.clicks = sumRows(prevRows, 'clicks')
         item.prev.impressions = sumRows(prevRows, 'impressions')
         item.prev.ctr = item.prev.impressions ? (item.prev.clicks / item.prev.impressions) * 100 : 0
-        const prevWeighted = rows2.reduce((acc:number,row:any)=> acc + Number(row.position||0)*Number(row.impressions||0), 0)
-        item.prev.position = prevImpr ? prevWeighted / prevImpr : 0
+        const prevImpr = sumRows(prevRows, 'impressions')
+        const prevWeighted = prevRows.reduce((acc:number,row:any)=> acc + Number(row.position||0)*Number(row.impressions||0), 0)
+        item.prev.position = prevImpr ? prevWeighted / Math.max(1, prevImpr) : 0
 
         const currentQueries = await fetchJson(fetch(`/api/google/gsc/queries?site=${encodeURIComponent(integ.gscSite)}&start=${startISO}&end=${endISO}&rowLimit=25000`))
         const prevQueries = await fetchJson(fetch(`/api/google/gsc/queries?site=${encodeURIComponent(integ.gscSite)}&start=${pStart}&end=${pEnd}&rowLimit=25000`))
@@ -336,9 +338,9 @@ export async function prefetchPerformanceSnapshot(opts?: { force?: boolean }): P
             deltaPosition: prior.position!==undefined ? Number(r.position||0) - Number(prior.position||0) : 0
           }
         })
-        list.sort((a,b)=> (b.clicks||0) - (a.clicks||0))
+        list.sort((a: any, b: any)=> (Number(b.clicks||0)) - (Number(a.clicks||0)))
         item.queries = list
-        item.queriesClicks = list.reduce((acc, row)=> acc + Number(row.clicks||0), 0)
+        item.queriesClicks = list.reduce((acc: number, row: any)=> acc + Number(row.clicks||0), 0)
       }catch(err:any){
         item.errors = { ...(item.errors||{}), gsc: 'GSC fetch failed', gscText: err?.message }
       }

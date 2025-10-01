@@ -1,17 +1,27 @@
 "use client"
 import Modal from "@/components/ui/Modal"
 import { useState } from "react"
+import { useSession } from "next-auth/react"
 
 export type Website = { id: string; name: string; url: string; industry?: string; description?: string; createdAt?: number }
 
 export default function AddWebsiteModal({ open, onClose, onCreate }: { open: boolean, onClose: () => void, onCreate: (w: Website) => void }){
+  const { data: session } = useSession()
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [industry, setIndustry] = useState("")
   const [desc, setDesc] = useState("")
 
-  const submit = () => {
+  const submit = async () => {
     if(!name || !url) return alert('Name and URL are required')
+    // Server-side plan enforcement
+    try{
+      const email = (session as any)?.user?.email as string|undefined
+      if(email){
+        const r = await fetch('/api/sites/validate-create', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ email }) })
+        if(r.status===403){ const j=await r.json().catch(()=>({})); alert(j?.error || 'Plan limit reached. Upgrade your plan to add more websites.'); return }
+      }
+    }catch{}
     const id = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : String(Date.now())
     const w: Website = { id, name, url, industry, description: desc, createdAt: Date.now() }
     onCreate(w)

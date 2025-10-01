@@ -401,7 +401,7 @@ export default function WebsitesClient(){
  
       {/* Integration modal */}
       <Modal open={openInteg} onClose={()=>setOpenInteg(false)}>
-        <h3>Integrations</h3>
+        <h3>{(sites.find(s=>s.id===activeId)?.name || sites.find(s=>s.id===activeId)?.url || 'Integrations') + (sites.find(s=>s.id===activeId)? ' – Integrations':'')}</h3>
         <div style={{display:'grid', gap:12}}>
           {/* GSC */}
           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #1f2937', borderRadius:12, padding:12}}>

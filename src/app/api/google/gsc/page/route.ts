@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { cached } from '@/lib/cache'
 
 export async function GET(req: Request){
   const { searchParams } = new URL(req.url)
@@ -22,9 +23,13 @@ export async function GET(req: Request){
     rowLimit,
     dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'equals', expression: page }] }]
   }
-  const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if(!res.ok){ const text = await res.text(); return new Response(text, { status: res.status }) }
-  const data = await res.json()
-  return Response.json(data)
+  const email = (session as any)?.user?.email || 'anon'
+  const key = `gsc:page:${email}:${site}:${start}:${end}:${page}:${dimension}:${rowLimit}`
+  const data = await cached(key, 43200, async()=>{
+    const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if(!res.ok){ const text = await res.text(); throw new Error(text) }
+    return res.json()
+  })
+  return Response.json(data as any)
 }
 

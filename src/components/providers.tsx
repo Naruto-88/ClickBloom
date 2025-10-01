@@ -13,11 +13,25 @@ export function Providers({ children }: { children: ReactNode }){
       try{ await prefetchPerformanceSnapshot({ force }) }catch{}
       try{ await prefetchKeywordsSnapshots({ force }) }catch{}
     }
-    warm(false)
-    const id = window.setInterval(()=> warm(false), SNAPSHOT_TTL_MS)
+    const runWhenIdle = (cb: ()=>void)=>{
+      // Defer heavy prefetch to browser idle time to improve TTI
+      const ric: any = (window as any).requestIdleCallback
+      if(typeof ric === 'function') ric(()=> cb())
+      else window.setTimeout(cb, 300)
+    }
+    const kick = ()=>{
+      if(document.visibilityState !== 'visible') return
+      runWhenIdle(()=> warm(false))
+    }
+    // Initial warmup deferred until tab is visible and idle
+    kick()
+    document.addEventListener('visibilitychange', kick)
+    // Refresh on a long cadence (12h) while tab is visible
+    const id = window.setInterval(()=>{ if(document.visibilityState==='visible') warm(false) }, SNAPSHOT_TTL_MS)
     return ()=>{
       cancelled = true
       window.clearInterval(id)
+      document.removeEventListener('visibilitychange', kick)
     }
   }, [])
   return (

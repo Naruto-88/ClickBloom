@@ -89,7 +89,13 @@ export async function autoConnect(siteUrl: string, key: string, appBase?: string
     info = await getPluginInfo(restBase)
   }
   // Fallback: if info endpoint blocked, infer update endpoint
-  const endpoints = info?.endpoints || { update: restBase.replace(/\/$/,'') + '/clickbloom/v1/update' }
+  const base = restBase.replace(/\/$/,'')
+  const endpoints = info?.endpoints || {
+    update: base + '/clickbloom/v1/update',
+    revert: base + '/clickbloom/v1/revert',
+    settings: base + '/clickbloom/v1/settings',
+    config: base + '/clickbloom/v1/config',
+  }
   return { restBase, info: info||{ ok:true }, activated: !!info?.activated, endpoints }
 }
 

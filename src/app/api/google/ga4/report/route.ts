@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { cached } from '@/lib/cache'
 export const runtime = 'nodejs'
 
 export async function POST(req: Request){
@@ -17,10 +18,14 @@ export async function POST(req: Request){
       metrics: [{ name: 'sessions' }],
       limit: 100000
     }
-    const res = await fetch(url, { method:'POST', headers:{ 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    if(!res.ok){ const text = await res.text(); return new Response(JSON.stringify({ error:text }), { status: res.status }) }
-    const data = await res.json()
-    return Response.json(data)
+    const email = (session as any)?.user?.email || 'anon'
+    const key = `ga4:report:${email}:${property}:${start}:${end}`
+    const data = await cached(key, 43200, async()=>{
+      const res = await fetch(url, { method:'POST', headers:{ 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if(!res.ok){ const text = await res.text(); throw new Error(text) }
+      return res.json()
+    })
+    return Response.json(data as any)
   }catch(e:any){
     return new Response(JSON.stringify({ error: e?.message || 'GA4 report error' }), { status: 500 })
   }

@@ -6,11 +6,13 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:migrate": "node ./web/scripts/db-migrate.cjs"
   },
   "dependencies": {
     "cheerio": "1.0.0-rc.12",
     "google-ads-api": "^21.0.1",
+    "mysql2": "^3.9.7",
     "next": "14.2.10",
     "next-auth": "5.0.0-beta.20",
     "openai": "4.54.0",

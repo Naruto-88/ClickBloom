@@ -37,7 +37,7 @@ type GscSummaryEntry = {
 const MAX_TIMELINE_DAYS = 180
 const GSC_DELAY_DAYS = 2
 const TOP_LIMIT = 20
-const STICKY_BG = '#0c1024'
+const STICKY_BG = 'var(--kw-sticky-bg)'
 // Fixed column widths to keep sticky alignment consistent with scrollable dates
 const COL_KEYWORD = 260
 const COL_CLICKS = 110
@@ -121,11 +121,11 @@ function formatNumber(value: number | null | undefined){
   return new Intl.NumberFormat().format(Math.round(value))
 }
 function cellStyle(position: number | null){
-  if(position===null) return { background:'#101228', border:'#2b2b47', color:'#d1d5f9' }
-  if(position<=3) return { background:'#11291c', border:'#1f5138', color:'#34d399' }
-  if(position<=10) return { background:'#112533', border:'#1f4370', color:'#60a5fa' }
-  if(position<=20) return { background:'#32220f', border:'#5b3b17', color:'#facc15' }
-  return { background:'#181825', border:'#2b2b47', color:'#e6e6f0' }
+  if(position===null) return { background:'var(--kw-unknown-bg)', border:'var(--kw-unknown-border)', color:'var(--kw-unknown-fg)' }
+  if(position<=3) return { background:'var(--kw-good-bg)', border:'var(--kw-good-border)', color:'var(--kw-good-fg)' }
+  if(position<=10) return { background:'var(--kw-blue-bg)', border:'var(--kw-blue-border)', color:'var(--kw-blue-fg)' }
+  if(position<=20) return { background:'var(--kw-warn-bg)', border:'var(--kw-warn-border)', color:'var(--kw-warn-fg)' }
+  return { background:'var(--kw-neutral-bg)', border:'var(--kw-neutral-border)', color:'var(--kw-neutral-fg)' }
 }
 
 export default function KeywordsClient(){
@@ -663,7 +663,14 @@ export default function KeywordsClient(){
               <button
                 key={days}
                 className="btn secondary"
-                style={{height:34, padding:'0 12px', background: timelineDays===days? '#1f1f3a':'#0f0f20', borderColor: timelineDays===days? '#3a3a5d':'#2b2b47', transition:'background 160ms, border-color 160ms'}}
+                style={{
+                  height:34,
+                  padding:'0 12px',
+                  background: timelineDays===days? 'var(--preset-active-bg)':'var(--preset-bg)',
+                  borderColor: timelineDays===days? 'var(--preset-active-border)':'var(--preset-border)',
+                  color: timelineDays===days? 'var(--preset-active-fg)':'var(--preset-fg)',
+                  transition:'background 160ms, border-color 160ms'
+                }}
                 title={`Show last ${days} days`}
                 onClick={()=> setTimelineDays(days)}
               >
@@ -671,11 +678,11 @@ export default function KeywordsClient(){
               </button>
             ))}
           </div>
-          <div className="chip" style={{background:'#162042', border:'1px solid #243266', padding:'8px 12px', borderRadius:12}}>
+          <div className="chip" style={{background:'var(--preset-bg)', border:'1px solid var(--preset-border)', padding:'8px 12px', borderRadius:12, color:'var(--preset-fg)'}}>
             <strong>{filtered.length}</strong>&nbsp;keywords
           </div>
           {/* GSC connectivity badge */}
-          <div className="chip" style={{background:'#162042', border:'1px solid #243266', padding:'8px 12px', borderRadius:12}}>
+          <div className="chip" style={{background:'var(--preset-bg)', border:'1px solid var(--preset-border)', padding:'8px 12px', borderRadius:12, color:'var(--preset-fg)'}}>
             GSC: {getGscSite()? 'Connected' : 'Not connected'}
           </div>
           <button className={`btn ${trackerMode==='api' ? '' : 'secondary'}`} onClick={()=> setTrackerMode('api')} disabled={trackerMode==='api'}>API</button>
@@ -690,20 +697,20 @@ export default function KeywordsClient(){
         </div>
       </header>
 
-      {sites.length>0 && (
-        <div style={{display:'flex', flexWrap:'wrap', gap:8}}>
-          {sites.map(s=>{
-            const parts = (s.name||'').split(/\s+|-/).filter(Boolean)
-            const code = parts.length? (parts[0][0] + (parts[1]?.[0]||'') + (parts[2]?.[0]||'')).toUpperCase() : (s.name||'??').slice(0,3).toUpperCase()
-            const active = s.id===siteId
-            return (
-              <div key={s.id} onClick={()=> handleSelectSite(s.id)} style={{ padding:'6px 10px', borderRadius:999, border:`1px solid ${active? '#3a3a5d':'#2b2b47'}`, background: active? '#1f1f3a':'#0f0f20', color: active? '#fff':'#cfd2e6', cursor:'pointer', fontWeight:700, letterSpacing:.3 }}>
-                {code}
-              </div>
-            )
-          })}
-        </div>
-      )}
+          {sites.length>0 && (
+            <div style={{display:'flex', flexWrap:'wrap', gap:8}}>
+              {sites.map(s=>{
+                const parts = (s.name||'').split(/\s+|-/).filter(Boolean)
+                const code = parts.length? (parts[0][0] + (parts[1]?.[0]||'') + (parts[2]?.[0]||'')).toUpperCase() : (s.name||'??').slice(0,3).toUpperCase()
+                const active = s.id===siteId
+                return (
+                  <div key={s.id} onClick={()=> handleSelectSite(s.id)} style={{ padding:'6px 10px', borderRadius:999, border:`1px solid ${active? 'var(--preset-active-border)':'var(--preset-border)'}`, background: active? 'var(--preset-active-bg)':'var(--preset-bg)', color: active? 'var(--preset-active-fg)':'var(--preset-fg)', cursor:'pointer', fontWeight:700, letterSpacing:.3 }}>
+                    {code}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
       <div style={{display:'flex', flexWrap:'wrap', gap:12, alignItems:'center', justifyContent:'space-between'}}>
         <div style={{display:'flex', gap:8, flexWrap:'wrap'}}></div>
@@ -768,8 +775,14 @@ export default function KeywordsClient(){
                 key={b.key}
                 className="btn secondary"
                 onClick={()=> setPosFilter(b.key)}
-                title="Counts respect current Search and Range filters; day = latest available (API: today, GSC: today−2)."
-                style={{height:30, padding:'0 10px', background: active? '#1f1f3a':'#0f0f20', borderColor: active? '#3a3a5d':'#2b2b47', color: active? '#fff': b.color}}
+                title="Counts respect current Search and Range filters; day = latest available (API: today, GSC: today-2)."
+                style={{
+                  height:30,
+                  padding:'0 10px',
+                  background: active? 'var(--preset-active-bg)' : 'var(--preset-bg)',
+                  borderColor: active? 'var(--preset-active-border)' : 'var(--preset-border)',
+                  color: active? 'var(--preset-active-fg)' : 'var(--preset-fg)'
+                }}
               >
                 {b.label}
                 <span className="badge" style={{marginLeft:6, borderColor:b.color, color:b.color}}>{n}</span>

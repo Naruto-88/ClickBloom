@@ -2,6 +2,7 @@
 import WebsitePicker from "@/components/dashboard/WebsitePicker"
 import Modal from "@/components/ui/Modal"
 import RangeDropdown, { DateRange } from "@/components/ui/RangeDropdown"
+import { useSession } from "next-auth/react"
 import KpiCard from "@/components/dashboard/KpiCard"
 import PerformancePanel, { Point } from "@/components/dashboard/PerformancePanel"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -16,6 +17,7 @@ function loadInteg(id: string): Integ{ try{ return JSON.parse(localStorage.getIt
 const fmtNum = (n:number)=> n>=1000? (n/1000).toFixed(1)+'K' : String(n)
 
 export default function PerformanceClient(){
+  const { data: session } = useSession()
   const [siteId, setSiteId] = useState<string|undefined>(undefined)
   const [range, setRange] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-29); return { from:s,to:y } })
   const [loading, setLoading] = useState(false)
@@ -31,11 +33,24 @@ export default function PerformanceClient(){
 
   const sites = useMemo(()=> loadSites(), [])
   const selectedAll = siteId==='__ALL__'
+  const [maxDays, setMaxDays] = useState<number>(30)
 
   const fmtDate = (d:Date)=> d.toISOString().slice(0,10)
   const qs = (p:any)=> Object.entries(p).map(([k,v])=>`${k}=${encodeURIComponent(String(v))}`).join('&')
 
   useEffect(()=>{
+    // Load plan → set maxDays
+    (async()=>{
+      try{
+        const email = (session as any)?.user?.email as string|undefined
+        if(!email) return
+        const r = await fetch('/api/admin/plan?email='+encodeURIComponent(email))
+        const j = await r.json(); const name = (j?.plan?.name||'basic') as 'basic'|'pro'|'agency'
+        const map: Record<string, number> = { basic: 30, pro: 365, agency: 3650 }
+        setMaxDays(map[name]||30)
+      }catch{}
+    })()
+  }, [session])
     const run = async()=>{
       const ids = selectedAll? sites.map(s=>s.id) : (siteId? [siteId] : [])
       if(ids.length===0){ setData({}); return }
@@ -56,6 +71,19 @@ export default function PerformanceClient(){
           const ga4 = integ.ga4Property
           const item: any = { site, integ, points: [] as Point[], totals:{ clicks:0, impressions:0, ctr:0, position:0 }, prev:{ clicks:0, impressions:0, ctr:0, position:0 }, ga4:{ sessions:0, channels:{} as Record<string,number> }, queries: [] as Array<{ query:string, clicks:number, url?:string }>, errors:{} }
           if(gsc){
+            // Try SQL-backed server snapshot first
+            try{
+              const email = (session as any)?.user?.email as string|undefined
+              const s = await fetch(`/api/perf/snapshot?siteId=${encodeURIComponent(id)}&gsc=${encodeURIComponent(gsc)}&start=${fmtDate(start)}&end=${fmtDate(end)}${email? `&email=${encodeURIComponent(email)}`:''}`)
+              if(s.ok){
+                const snap = await s.json(); const v = snap?.value
+                if(v?.gsc){
+                  item.points = (v.gsc.points||[]) as Point[]
+                  item.totals = v.gsc.totals||item.totals
+                  item.prev = v.gsc.prev||item.prev
+                }
+              }
+            }catch{}
             const rG = gscRangeBySite[id] || { from:start, to:end }
             const gStart = rG.from, gEnd = rG.to
             // GSC daily
@@ -66,14 +94,18 @@ export default function PerformanceClient(){
             }
             const cur = r.ok? await r.json(): { rows: [] }
             const rows:any[] = cur.rows||[]
-            const pts: Point[] = rows.map(rr=> ({ date: rr.keys?.[0], clicks: rr.clicks||0, impressions: rr.impressions||0, ctr: Math.round((rr.ctr||0)*1000)/10, position: Math.round((rr.position||0)*10)/10 }))
-            item.points = pts
+            if(item.points.length===0){
+              const pts: Point[] = rows.map(rr=> ({ date: rr.keys?.[0], clicks: rr.clicks||0, impressions: rr.impressions||0, ctr: Math.round((rr.ctr||0)*1000)/10, position: Math.round((rr.position||0)*10)/10 }))
+              item.points = pts
+            }
             const sum=(k:string)=> rows.reduce((a,r)=> a+(r[k]||0),0)
             const totImpr = sum('impressions')
-            item.totals.clicks = sum('clicks'); item.totals.impressions=totImpr
-            item.totals.ctr = totImpr? (item.totals.clicks/totImpr*100):0
-            const posWeighted = rows.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
-            item.totals.position = totImpr? (posWeighted / totImpr) : 0
+            if(item.totals.impressions===0){
+              item.totals.clicks = sum('clicks'); item.totals.impressions=totImpr
+              item.totals.ctr = totImpr? (item.totals.clicks/totImpr*100):0
+              const posWeighted = rows.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
+              item.totals.position = totImpr? (posWeighted / totImpr) : 0
+            }
             // previous window matched to GSC range
             const gDays = Math.max(1, Math.round((gEnd.getTime()-gStart.getTime())/86400000)+1)
             const gPrevEnd = new Date(gStart); gPrevEnd.setDate(gStart.getDate()-1)
@@ -81,12 +113,14 @@ export default function PerformanceClient(){
             const r2 = await fetch(`/api/google/gsc/search?${qs({ site:gsc, start: fmtDate(gPrevStart), end: fmtDate(gPrevEnd) })}`)
             const prev = r2.ok? await r2.json(): { rows: [] }
             const rows2:any[] = prev.rows||[]
-            const sum2=(k:string)=> rows2.reduce((a,r)=> a+(r[k]||0),0)
-            const prevImpr = sum2('impressions')
-            item.prev.clicks=sum2('clicks'); item.prev.impressions=prevImpr
-            item.prev.ctr = prevImpr? (item.prev.clicks/prevImpr*100):0
-            const prevWeighted = rows2.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
-            item.prev.position = prevImpr? (prevWeighted / prevImpr) : 0
+            if(item.prev.impressions===0){
+              const sum2=(k:string)=> rows2.reduce((a,r)=> a+(r[k]||0),0)
+              const prevImpr = sum2('impressions')
+              item.prev.clicks=sum2('clicks'); item.prev.impressions=prevImpr
+              item.prev.ctr = prevImpr? (item.prev.clicks/prevImpr*100):0
+              const prevWeighted = rows2.reduce((a,r)=> a + (r.position||0)*(r.impressions||0), 0)
+              item.prev.position = prevImpr? (prevWeighted / prevImpr) : 0
+            }
             // queries (current + previous for deltas)
             const qres = await fetch(`/api/google/gsc/queries?${qs({ site:gsc, start: fmtDate(gStart), end: fmtDate(gEnd), rowLimit: 25000 })}`)
             const qjson = qres.ok? await qres.json() : { rows: [] }
@@ -106,14 +140,21 @@ export default function PerformanceClient(){
           if(ga4){
             const rA = ga4RangeBySite[id] || { from:start, to:end }
             const aStart = rA.from, aEnd = rA.to
+            // Try SQL snapshot for GA4
             try{
-              const gres = await fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(aStart), end: fmtDate(aEnd) }) })
+              const email = (session as any)?.user?.email as string|undefined
+              const s2 = await fetch(`/api/perf/snapshot?siteId=${encodeURIComponent(id)}&ga4=${encodeURIComponent(ga4)}&start=${fmtDate(aStart)}&end=${fmtDate(aEnd)}${email? `&email=${encodeURIComponent(email)}`:''}`)
+              if(s2.ok){ const snap2 = await s2.json(); const v2 = snap2?.value; if(v2?.ga4){ item.ga4.sessions = Number(v2.ga4.sessions||0); item.ga4.channels = v2.ga4.channels||{} } }
+            }catch{}
+            try{
+              const email = (session as any)?.user?.email as string|undefined
+              const gres = await fetch('/api/google/ga4/acquisition', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4, start: fmtDate(aStart), end: fmtDate(aEnd), email }) })
               const gjson = await gres.json()
               const rows:any[] = gjson.rows||[]
               const chan: Record<string,number> = {}
               rows.forEach(r=>{ const ch=r.dimensionValues?.[0]?.value||'Other'; const v=Number(r.metricValues?.[0]?.value||0); chan[ch]=(chan[ch]||0)+v })
-              item.ga4.channels = chan
-              item.ga4.sessions = Object.values(chan).reduce((a,b)=>a+(b||0),0)
+              if(Object.keys(item.ga4.channels||{}).length===0){ item.ga4.channels = chan }
+              if(!item.ga4.sessions){ item.ga4.sessions = Object.values(item.ga4.channels).reduce((a,b)=>a+(b||0),0) }
             }catch(e:any){ item.errors.ga4 = 'GA4 error' }
           }
           results[id]=item
@@ -202,12 +243,12 @@ export default function PerformanceClient(){
           <div className="panel-title" style={{marginTop:8}}>
             <div><strong>Google Search Console</strong><div className="muted">Search performance and queries</div></div>
             <div style={{display:'flex', alignItems:'center', gap:8}}>
-              <RangeDropdown value={gscRangeBySite[b.site.id] || range} onChange={(r)=> setGscRangeBySite(prev=> ({ ...prev, [b.site.id]: r }))} />
+              <RangeDropdown value={gscRangeBySite[b.site.id] || range} onChange={(r)=> setGscRangeBySite(prev=> ({ ...prev, [b.site.id]: r }))} maxDays={maxDays} />
               <button className="btn secondary" onClick={()=> summarize('gsc', b)} disabled={aiBusy===`${b.site.id}:gsc`}>{aiBusy===`${b.site.id}:gsc`? 'Summarizing…':'AI Summary'}</button>
             </div>
           </div>
           {!!b.errors?.gsc && (
-            <div className="card" style={{borderColor:'#432020', background:'#2a1212', color:'#ffb6b6', marginBottom:12}}>
+            <div className="card" style={{borderColor:'var(--err-border)', background:'var(--err-bg)', color:'var(--err-fg)', marginBottom:12}}>
               <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12}}>
                 <div>
                   <div><strong>Search Console Error</strong>: {b.errors.gsc}</div>
@@ -219,7 +260,7 @@ export default function PerformanceClient(){
             </div>
           )}
           {!!b.errors?.ga4 && (
-            <div className="card" style={{borderColor:'#3a2433', background:'#1b1520', color:'#ffb6b6', marginBottom:12}}>
+            <div className="card" style={{borderColor:'var(--err-border)', background:'var(--err-bg)', color:'var(--err-fg)', marginBottom:12}}>
               <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12}}>
                 <div>
                   <div><strong>GA4 Error</strong>: {b.errors.ga4}</div>
@@ -242,9 +283,14 @@ export default function PerformanceClient(){
                   <strong>Queries</strong>
                   <div className="muted" style={{marginTop:4}}>Period: {periodLabel(gscRangeBySite[b.site.id] || range)}</div>
                 </div>
-                <a className="btn secondary" href={gscLink(b.integ.gscSite)} target="_blank" rel="noreferrer">See in GSC</a>
+                <div style={{display:'flex', alignItems:'center', gap:8}}>
+                  <button className="btn secondary" onClick={()=>{
+                    const copy = { ...data } as any; if(!copy[b.site.id]) copy[b.site.id]={}; copy[b.site.id].nearMe = !copy[b.site.id].nearMe; setData(copy)
+                  }} title="Filter 'near me' queries" style={{height:36, padding:'0 12px', background: data[b.site.id]?.nearMe? 'var(--preset-active-bg)' : 'var(--preset-bg)', borderColor: data[b.site.id]?.nearMe? 'var(--preset-active-border)':'var(--preset-border)', color: data[b.site.id]?.nearMe? 'var(--preset-active-fg)':'var(--preset-fg)'}}>NearMe</button>
+                  <a className="btn secondary" href={gscLink(b.integ.gscSite)} target="_blank" rel="noreferrer">See in GSC</a>
+                </div>
               </div>
-              <div style={{marginBottom:8}}>
+              <div style={{marginBottom:8, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
                 <input className="input" placeholder="Search query" onChange={(e)=>{
                   const v = e.target.value.toLowerCase();
                   const copy = { ...data } as any; if(copy[b.site.id]){ copy[b.site.id].queryFilter=v; setData(copy) }
@@ -252,7 +298,7 @@ export default function PerformanceClient(){
               </div>
               {/* Header row */}
               <div className="table" style={{marginBottom:6}}>
-                <div style={{display:'grid', gridTemplateColumns:'1.5fr 100px 100px 100px 100px 100px', gap:8, padding:'6px 8px'}}>
+                <div style={{display:'grid', gridTemplateColumns:'2fr 90px 90px 90px 90px 80px', gap:6, padding:'6px 8px'}}>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'left', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'query')}>Query {sortMarker(querySort[b.site.id],'query')}</button>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'center', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'impressions')}>Impressions {sortMarker(querySort[b.site.id],'impressions')}</button>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'center', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'deltaImpressions')}>Δ Impr. {sortMarker(querySort[b.site.id],'deltaImpressions')}</button>
@@ -264,9 +310,13 @@ export default function PerformanceClient(){
               <div style={{display:'grid', gap:8, maxHeight:320, overflowY:'auto'}}>
                 {sortQueries((b.queries||[]), querySort[b.site.id]).filter((q:any)=>{
                   const f = (data[b.site.id]?.queryFilter||'');
-                  if(!f) return true; return String(q.query||'').toLowerCase().includes(f)
+                  const near = !!(data[b.site.id]?.nearMe);
+                  const qtext = String(q.query||'').toLowerCase();
+                  const byText = f? qtext.includes(f) : true;
+                  const byNear = near? (qtext.includes('near me') || qtext.includes('nearme')) : true;
+                  return byText && byNear
                 }).map((q:any,i:number)=> (
-                  <div key={i} style={{display:'grid', gridTemplateColumns:'1.5fr 100px 100px 100px 100px 100px', alignItems:'center', gap:8}}>
+                  <div key={i} style={{display:'grid', gridTemplateColumns:'2fr 90px 90px 90px 90px 80px', alignItems:'center', gap:6}}>
                     <a href="#" onClick={(e)=>{ e.preventDefault(); setQueryModal({ siteId: b.site.id, term: q.query }); }} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={q.query}>{q.query}</a>
                     <div style={{textAlign:'center'}}>{q.impressions||0}</div>
                     <div style={{textAlign:'center', color: (q.deltaImpressions||0)>=0? '#34d399':'#f87171' }}>{(q.deltaImpressions||0)>=0? `+${q.deltaImpressions||0}`: (q.deltaImpressions||0)}</div>
@@ -289,14 +339,14 @@ export default function PerformanceClient(){
           <div className="panel-title" style={{marginTop:12}}>
             <div><strong>Google Analytics 4</strong><div className="muted">User acquisition</div></div>
             <div style={{display:'flex', alignItems:'center', gap:8}}>
-              <RangeDropdown value={ga4RangeBySite[b.site.id] || range} onChange={(r)=> setGa4RangeBySite(prev=> ({ ...prev, [b.site.id]: r }))} />
+              <RangeDropdown value={ga4RangeBySite[b.site.id] || range} onChange={(r)=> setGa4RangeBySite(prev=> ({ ...prev, [b.site.id]: r }))} maxDays={maxDays} />
               <button className="btn secondary" onClick={()=> summarize('ga4', b)} disabled={aiBusy===`${b.site.id}:ga4`}>{aiBusy===`${b.site.id}:ga4`? 'Summarizing…':'AI Summary'}</button>
               {b.integ.ga4Property && <a className="btn secondary" href={ga4Link(b.integ.ga4Property)} target="_blank" rel="noreferrer">Open in GA4</a>}
             </div>
           </div>
           <div className="card" style={{marginTop:8}}>
             <div className="panel-title"><strong>Acquisition Channels</strong></div>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12}}>
+            <div className="grid-4">
               {['Organic Search','Paid Search','Direct'].map((k)=> (
                 <div key={k} className="kpi-tile"><div><div className="value">{fmtNum(b.ga4.channels[k]||0)}</div><div className="muted">{k} Sessions</div></div></div>
               ))}
@@ -435,7 +485,8 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
     const w = cnv.width, h = cnv.height
     ctx.clearRect(0,0,w,h)
     // grid
-    ctx.strokeStyle = '#232343'; ctx.lineWidth = 1
+    const cssVar = (name:string, fb:string)=>{ try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fb }catch{ return fb } }
+    ctx.strokeStyle = cssVar('--border', '#e5e7eb'); ctx.lineWidth = 1
     for(let i=0;i<5;i++){ const y = pad + (i*(h-pad*2))/4; ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(w-pad,y); ctx.stroke() }
     const xs=(i:number)=> pad + (i*(w-pad*2))/Math.max(1, series.length-1)
     const drawSmooth=(vals:number[], color:string, min:number, max:number, opts?:{fill?:boolean, dashed?:boolean})=>{
@@ -443,7 +494,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
       const val=(v:number)=> h-pad - ((v-min)/Math.max(1,(max-min)))*(h-pad*2)
       if(opts?.fill){
         const grad = ctx.createLinearGradient(0,pad,0,h-pad)
-        grad.addColorStop(0, color+'55'); grad.addColorStop(1, '#0b0b16')
+        grad.addColorStop(0, color+'55'); grad.addColorStop(1, cssVar('--card', '#ffffff'))
         ctx.fillStyle=grad
         ctx.beginPath()
         for(let i=0;i<vals.length;i++){
@@ -459,7 +510,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
       }
       ctx.stroke(); ctx.setLineDash([])
       // markers
-      for(let i=0;i<vals.length;i++){ const x=xs(i), y=val(vals[i]); ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.stroke() }
+      for(let i=0;i<vals.length;i++){ const x=xs(i), y=val(vals[i]); ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=cssVar('--card', '#ffffff'); ctx.lineWidth=1; ctx.stroke() }
     }
     if(!Array.isArray(series) || series.length===0) return
     const flags = { clicks: show?.clicks ?? true, impressions: show?.impressions ?? true, position: show?.position ?? true }
@@ -471,7 +522,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
     if(flags.position){ const minP=Math.min(...pos), maxP=Math.max(...pos); drawSmooth(pos,'#fbbf24',minP,maxP,{dashed:true}) }
 
     // X-axis dates
-    ctx.fillStyle = '#a3a6c2'; ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto'; ctx.textAlign='center'
+    ctx.fillStyle = cssVar('--muted', '#6b7280'); ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto'; ctx.textAlign='center'
     const n = series.length
     if(n>0){ const target=8; const step=Math.max(1, Math.round(n/target)); for(let i=0;i<n;i+=step){ const x=xs(i); ctx.fillText(series[i].date, x, h-6) } }
   }, [series, show, dims.w, dims.h])
@@ -486,9 +537,9 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
         {hover!==null && series[hover] && (
           <>
             <div style={{position:'absolute', inset:0, pointerEvents:'none'}}>
-              <div style={{position:'absolute', top:0, bottom:0, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% )`, width:0, borderLeft:'1px dashed #3b3b5e'}}/>
+              <div style={{position:'absolute', top:0, bottom:0, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% )`, width:0, borderLeft:'1px dashed var(--border)'}}/>
             </div>
-            <div style={{position:'absolute', top:12, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% - 120px)`, background:'#141428', border:'1px solid #2b2b47', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
+            <div style={{position:'absolute', top:12, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% - 120px)`, background:'var(--menu-bg)', border:'1px solid var(--menu-border)', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
               <div style={{fontWeight:700, marginBottom:4}}>{series[hover].date}</div>
               <div>Clicks: <strong>{series[hover].clicks}</strong></div>
               <div>Impressions: <strong>{series[hover].impressions}</strong></div>

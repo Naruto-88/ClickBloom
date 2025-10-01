@@ -19,7 +19,7 @@ const fmtNum = (n:number)=> n>=1000? (n/1000).toFixed(1)+'K' : String(n)
 
 const ga4Delta = (current:number, previous:number)=>{
   const diff = current - previous
-  if(!previous && !current) return { text: 'vs prev: no change', color: '#a3a6c2' }
+  if(!previous && !current) return { text: 'vs prev: no change', color: 'var(--muted)' }
   if(!previous){
     return { text: `vs prev: +${fmtNum(current)} (new)`, color: '#34d399' }
   }
@@ -28,7 +28,7 @@ const ga4Delta = (current:number, previous:number)=>{
   const absDiff = Math.round(Math.abs(diff))
   const absPct = Math.abs(pct).toFixed(1)
   if(absDiff===0){
-    return { text: 'vs prev: no change', color: '#a3a6c2' }
+    return { text: 'vs prev: no change', color: 'var(--muted)' }
   }
   return { text: `vs prev: ${sign}${fmtNum(absDiff)} (${sign}${absPct}%)`, color: diff>=0? '#34d399':'#f87171' }
 }
@@ -416,7 +416,13 @@ export default function PerformanceClient(){
               <button
                 key={p.key}
                 className="btn secondary"
-                style={{height:32, padding:'0 12px', background: activePreset===p.key? '#1f1f3a':'#0f0f20', borderColor: activePreset===p.key? '#3a3a5d':'#2b2b47'}}
+                style={{
+                  height:32,
+                  padding:'0 12px',
+                  background: activePreset===p.key? 'var(--preset-active-bg)':'var(--preset-bg)',
+                  borderColor: activePreset===p.key? 'var(--preset-active-border)':'var(--preset-border)',
+                  color: activePreset===p.key? 'var(--preset-active-fg)':'var(--preset-fg)'
+                }}
                 onClick={()=> selectPreset(p.key)}
               >
                 {p.label}
@@ -488,9 +494,14 @@ export default function PerformanceClient(){
                   <strong>Queries</strong>
                   <div className="muted" style={{marginTop:4}}>Period: {periodLabel(gscRangeBySite[b.site.id] || range)}</div>
                 </div>
-                <a className="btn secondary" href={gscLink(b.integ.gscSite)} target="_blank" rel="noreferrer">See in GSC</a>
+                <div style={{display:'flex', alignItems:'center', gap:8}}>
+                  <button className="btn secondary" onClick={()=>{
+                    const copy = { ...data } as any; if(!copy[b.site.id]) copy[b.site.id]={}; copy[b.site.id].nearMe = !copy[b.site.id].nearMe; setData(copy)
+                  }} title="Filter 'near me' queries" style={{height:36, padding:'0 12px', background: data[b.site.id]?.nearMe? 'var(--preset-active-bg)' : 'var(--preset-bg)', borderColor: data[b.site.id]?.nearMe? 'var(--preset-active-border)':'var(--preset-border)', color: data[b.site.id]?.nearMe? 'var(--preset-active-fg)':'var(--preset-fg)'}}>NearMe</button>
+                  <a className="btn secondary" href={gscLink(b.integ.gscSite)} target="_blank" rel="noreferrer">See in GSC</a>
+                </div>
               </div>
-              <div style={{marginBottom:8}}>
+              <div style={{marginBottom:8, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
                 <input className="input" placeholder="Search query" onChange={(e)=>{
                   const v = e.target.value.toLowerCase();
                   const copy = { ...data } as any; if(copy[b.site.id]){ copy[b.site.id].queryFilter=v; setData(copy) }
@@ -498,7 +509,7 @@ export default function PerformanceClient(){
               </div>
               {/* Header row */}
               <div className="table" style={{marginBottom:6}}>
-                <div style={{display:'grid', gridTemplateColumns:'1.5fr 100px 100px 100px 100px 100px', gap:8, padding:'6px 8px'}}>
+                <div style={{display:'grid', gridTemplateColumns:'2fr 90px 90px 90px 90px 80px', gap:6, padding:'6px 8px'}}>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'left', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'query')}>Query {sortMarker(querySort[b.site.id],'query')}</button>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'center', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'impressions')}>Impressions {sortMarker(querySort[b.site.id],'impressions')}</button>
                   <button className="muted" style={{fontSize:12, textTransform:'uppercase', letterSpacing:'.04em', textAlign:'center', background:'transparent', border:0, cursor:'pointer'}} onClick={()=>toggleSort(b.site.id,'deltaImpressions')}>Δ Impr. {sortMarker(querySort[b.site.id],'deltaImpressions')}</button>
@@ -510,9 +521,13 @@ export default function PerformanceClient(){
               <div style={{display:'grid', gap:8, maxHeight:320, overflowY:'auto'}}>
                 {sortQueries((b.queries||[]), querySort[b.site.id]).filter((q:any)=>{
                   const f = (data[b.site.id]?.queryFilter||'');
-                  if(!f) return true; return String(q.query||'').toLowerCase().includes(f)
+                  const near = !!(data[b.site.id]?.nearMe);
+                  const qtext = String(q.query||'').toLowerCase();
+                  const byText = f? qtext.includes(f) : true;
+                  const byNear = near? (qtext.includes('near me') || qtext.includes('nearme')) : true;
+                  return byText && byNear
                 }).map((q:any,i:number)=> (
-                  <div key={i} style={{display:'grid', gridTemplateColumns:'1.5fr 100px 100px 100px 100px 100px', alignItems:'center', gap:8}}>
+                  <div key={i} style={{display:'grid', gridTemplateColumns:'2fr 90px 90px 90px 90px 80px', alignItems:'center', gap:6}}>
                     <a href="#" onClick={(e)=>{ e.preventDefault(); setQueryModal({ siteId: b.site.id, term: q.query }); }} style={{color:'#93c5fd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={q.query}>{q.query}</a>
                     <div style={{textAlign:'center'}}>{q.impressions||0}</div>
                     <div style={{textAlign:'center', color: (q.deltaImpressions||0)>=0? '#34d399':'#f87171' }}>{(q.deltaImpressions||0)>=0? `+${q.deltaImpressions||0}`: (q.deltaImpressions||0)}</div>
@@ -540,15 +555,15 @@ export default function PerformanceClient(){
               {b.integ.ga4Property && <a className="btn secondary" href={ga4Link(b.integ.ga4Property)} target="_blank" rel="noreferrer">Open in GA4</a>}
             </div>
           </div>
-          <div className="card" style={{marginTop:8}}>
-            <div className="panel-title"><strong>Acquisition Channels</strong></div>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12}}>
+            <div className="card" style={{marginTop:8}}>
+              <div className="panel-title"><strong>Acquisition Channels</strong></div>
+            <div style={{display:'flex', gap:12, overflowX:'auto', paddingBottom:6, flexWrap:'nowrap'}}>
               {['Organic Search','Paid Search','Direct'].map((k)=> {
                 const current = b.ga4.channels[k] || 0
                 const previous = b.ga4.prevChannels?.[k] || 0
                 const delta = ga4Delta(current, previous)
                 return (
-                  <div key={k} className="kpi-tile">
+                  <div key={k} className="kpi-tile" style={{minWidth: 300, flex: '0 0 300px'}}>
                     <div>
                       <div className="value">{fmtNum(current)}</div>
                       <div className="muted">{k} Sessions</div>
@@ -560,7 +575,7 @@ export default function PerformanceClient(){
               {(() => {
                 const delta = ga4Delta(b.ga4.sessions||0, b.ga4.prevSessions||0)
                 return (
-                  <div className="kpi-tile">
+                  <div className="kpi-tile" style={{minWidth: 300, flex: '0 0 300px'}}>
                     <div>
                       <div className="value">{fmtNum(b.ga4.sessions||0)}</div>
                       <div className="muted">All Sessions</div>
@@ -605,7 +620,7 @@ function QueryDetails({ siteId, term, range, data, setData, gscSite }:{ siteId:s
   const [showImpr, setShowImpr] = useState(true)
   const [showPos, setShowPos] = useState(true)
   const [qRange, setQRange] = useState<DateRange>(range)
-  useEffect(()=>{ setQRange(range) }, [range.from, range.to, activePreset])
+  useEffect(()=>{ setQRange(range) }, [range.from, range.to])
   const setLastDays=(days:number)=>{ const y=new Date(); y.setDate(y.getDate()-1); const from=new Date(y.getTime()-(days-1)*86400000); setQRange({ from, to:y }) }
   useEffect(()=>{
     (async()=>{
@@ -703,7 +718,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
     const w = cnv.width, h = cnv.height
     ctx.clearRect(0,0,w,h)
     // grid
-    ctx.strokeStyle = '#232343'; ctx.lineWidth = 1
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb'; ctx.lineWidth = 1
     for(let i=0;i<5;i++){ const y = pad + (i*(h-pad*2))/4; ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(w-pad,y); ctx.stroke() }
     const xs=(i:number)=> pad + (i*(w-pad*2))/Math.max(1, series.length-1)
     const drawSmooth=(vals:number[], color:string, min:number, max:number, opts?:{fill?:boolean, dashed?:boolean})=>{
@@ -711,7 +726,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
       const val=(v:number)=> h-pad - ((v-min)/Math.max(1,(max-min)))*(h-pad*2)
       if(opts?.fill){
         const grad = ctx.createLinearGradient(0,pad,0,h-pad)
-        grad.addColorStop(0, color+'55'); grad.addColorStop(1, '#0b0b16')
+        grad.addColorStop(0, color+'55'); grad.addColorStop(1, getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || '#ffffff')
         ctx.fillStyle=grad
         ctx.beginPath()
         for(let i=0;i<vals.length;i++){
@@ -739,7 +754,7 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
     if(flags.position){ const minP=Math.min(...pos), maxP=Math.max(...pos); drawSmooth(pos,'#fbbf24',minP,maxP,{dashed:true}) }
 
     // X-axis dates
-    ctx.fillStyle = '#a3a6c2'; ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto'; ctx.textAlign='center'
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#6b7280'; ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto'; ctx.textAlign='center'
     const n = series.length
     if(n>0){ const target=8; const step=Math.max(1, Math.round(n/target)); for(let i=0;i<n;i+=step){ const x=xs(i); ctx.fillText(series[i].date, x, h-6) } }
   }, [series, show, dims.w, dims.h])
@@ -754,9 +769,9 @@ function QueryTrendChart({ series, show }:{ series: Array<{date:string, clicks:n
         {hover!==null && series[hover] && (
           <>
             <div style={{position:'absolute', inset:0, pointerEvents:'none'}}>
-              <div style={{position:'absolute', top:0, bottom:0, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% )`, width:0, borderLeft:'1px dashed #3b3b5e'}}/>
+              <div style={{position:'absolute', top:0, bottom:0, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% )`, width:0, borderLeft:'1px dashed var(--border)'}}/>
             </div>
-            <div style={{position:'absolute', top:12, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% - 120px)`, background:'#141428', border:'1px solid #2b2b47', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
+            <div style={{position:'absolute', top:12, left:`calc(34px + ${(hover/(Math.max(1,series.length-1)))*100}% - 120px)`, background:'var(--menu-bg)', border:'1px solid var(--menu-border)', borderRadius:8, padding:'8px 10px', width:240, pointerEvents:'none'}}>
               <div style={{fontWeight:700, marginBottom:4}}>{series[hover].date}</div>
               <div>Clicks: <strong>{series[hover].clicks}</strong></div>
               <div>Impressions: <strong>{series[hover].impressions}</strong></div>

@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { cached } from '@/lib/cache'
 
 export async function GET(req: Request){
   const { searchParams } = new URL(req.url)
@@ -14,12 +15,13 @@ export async function GET(req: Request){
   if(!token) return new Response('No token', { status: 401 })
   const url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site)}/searchAnalytics/query`
   const body = { startDate: start, endDate: end, dimensions: ["page"], rowLimit }
-  const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if(!res.ok){
-    const text = await res.text()
-    return new Response(text, { status: res.status })
-  }
-  const data = await res.json()
-  return Response.json(data)
+  const email = (session as any)?.user?.email || 'anon'
+  const key = `gsc:pages:${email}:${site}:${start}:${end}:${rowLimit}`
+  const data = await cached(key, 43200, async()=>{
+    const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if(!res.ok){ const text = await res.text(); throw new Error(text) }
+    return res.json()
+  })
+  return Response.json(data as any)
 }
 
