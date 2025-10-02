@@ -61,13 +61,13 @@ export default function OptimizeClient(){
       if(start > end) start = new Date(end)
 
       const res = await fetch(`/api/google/gsc/pages?${qs({site:siteUrl, start: fmt(start), end: fmt(end), rowLimit: 1000})}`)
-      const data = await res.json()
+      const data = res.ok ? (await res.json().catch(()=>({ rows: [] }))) : { rows: [] }
       const arr = (data.rows||[]).map((r:any)=> ({ url: r.keys?.[0], clicks: r.clicks||0, impressions: r.impressions||0, ctr: Math.round((r.ctr||0)*1000)/10, position: Math.round((r.position||0)*10)/10 })) as Row[]
       const days = Math.max(1, Math.round((end.getTime()-start.getTime())/86400000)+1)
       const prevEnd = new Date(start); prevEnd.setDate(start.getDate()-1)
       const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate()-(days-1))
       const prevRes = await fetch(`/api/google/gsc/pages?${qs({site:siteUrl, start: fmt(prevStart), end: fmt(prevEnd), rowLimit: 1000})}`)
-      const prev = await prevRes.json()
+      const prev = prevRes.ok ? (await prevRes.json().catch(()=>({ rows: [] }))) : { rows: [] }
       const prevMap = new Map<string, any>((prev.rows||[]).map((r:any)=> [r.keys?.[0], r]))
       arr.forEach(r=>{
         const p = prevMap.get(r.url)
@@ -91,7 +91,7 @@ export default function OptimizeClient(){
       if(ga4Property){
         try{
           const rep = await fetch('/api/google/ga4/report', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ property: ga4Property, start: fmt(start), end: fmt(end) }) })
-          const r = await rep.json()
+          const r = rep.ok ? (await rep.json().catch(()=>({ rows: [] }))) : { rows: [] }
           const ga4map = new Map<string, number>((r.rows||[]).map((x:any)=> [x.dimensionValues?.[0]?.value, Number(x.metricValues?.[0]?.value||0)]) )
           merged.forEach(m=>{ const v = ga4map.get(m.url); if(v!==undefined) (m as any).sessions = v })
         }catch{}
