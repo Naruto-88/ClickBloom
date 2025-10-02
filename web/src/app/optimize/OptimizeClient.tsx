@@ -26,7 +26,7 @@ export default function OptimizeClient(){
   const [pageSize, setPageSize] = useState(10)
   const [loading, setLoading] = useState(false)
   const [openRange, setOpenRange] = useState(false)
-  const [crawlMerged, setCrawlMerged] = useState<Row[]>([])
+  \n  const [mounted, setMounted] = useState(false)\n  useEffect(()=>{ setMounted(true) }, [])
 
   const siteUrl = gscSiteUrl(siteId)
   const ga4Property = (typeof window!=='undefined' && siteId ? (JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}').ga4Property as string|undefined) : undefined)
@@ -173,7 +173,7 @@ export default function OptimizeClient(){
         <div className="breadcrumb">Home – <strong>Optimize</strong></div>
         <div style={{marginLeft:'auto'}}>
           <div className="picker" style={{gap:8}}>
-            <button onClick={()=>setOpenRange(true)} style={{background:'transparent', border:0, color:'inherit', cursor:'pointer'}}>{formatRange(range)}</button>
+            <button onClick={()=>setOpenRange(true)} style={{background:'transparent', border:0, color:'inherit', cursor:'pointer'}}><span suppressHydrationWarning>{mounted? formatRange(range) : ''}</span></button>
           </div>
         </div>
         <RangePicker open={openRange} onClose={()=>setOpenRange(false)} value={range} onApply={setRange} />
@@ -312,3 +312,4 @@ export default function OptimizeClient(){
     </>
   )
 }
+
