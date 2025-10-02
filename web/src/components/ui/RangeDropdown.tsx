@@ -1,5 +1,5 @@
 "use client"
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import RangePicker from './RangePicker'
 
 export type DateRange = { from: Date, to: Date }
@@ -12,6 +12,8 @@ function toLabel(r: DateRange){
 export default function RangeDropdown({ value, onChange, maxDays }: { value: DateRange, onChange: (r: DateRange)=>void, maxDays?: number }){
   const [open, setOpen] = useState(false)
   const [showCustom, setShowCustom] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  useEffect(()=>{ setMounted(true) }, [])
   const presets = useMemo(()=>{
     const today = new Date(); const y = new Date(); y.setDate(today.getDate()-1)
     const mk = (days:number)=> ({ from: new Date(y.getTime() - (days-1)*86400000), to: y })
@@ -33,7 +35,7 @@ export default function RangeDropdown({ value, onChange, maxDays }: { value: Dat
   return (
     <div style={{position:'relative'}}>
       <div className="picker" onClick={()=>setOpen(v=>!v)} style={{cursor:'pointer'}}>
-        <span>{toLabel(value)}</span>
+        <span suppressHydrationWarning>{mounted? toLabel(value): ''}</span>
       </div>
       {open && (
         <div style={{position:'absolute', right:0, top:'110%', background:'var(--menu-bg)', border:'1px solid var(--menu-border)', borderRadius:10, minWidth:240, zIndex:50, padding:8}}>
