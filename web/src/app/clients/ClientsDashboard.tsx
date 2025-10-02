@@ -457,7 +457,7 @@ export default function ClientsDashboard(){
           </label>
           <div className="muted" style={{fontSize:12, display:'flex', alignItems:'center', gap:6}}>
             {loading && <span className="spinner" title="Loading selected range" aria-label="Loading selected range"/>}
-            {range.from.toLocaleDateString()} - {range.to.toLocaleDateString()} (vs previous period)
+            <span suppressHydrationWarning>{mounted? ${range.from.toLocaleDateString()} -  (vs previous period) : ''}</span>
           </div>
         </div>
       </div>
@@ -780,3 +780,4 @@ export default function ClientsDashboard(){
     </>
   )
 }
+
