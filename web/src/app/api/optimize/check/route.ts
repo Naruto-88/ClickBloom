@@ -59,15 +59,16 @@ export async function POST(req: Request){
     const totalImgs = $('img').length
     const images: Array<{ src: string, alt: string|null }> = []
     let withAlt = 0
+    const isDataUrl = (value?: string|null) => typeof value === 'string' && value.startsWith('data:')
     $('img').each((_,el)=>{
       const $el = $(el)
       const alt = ($el.attr('alt')||$el.attr('data-alt')||$el.attr('aria-label')||null); if(alt) withAlt++
       let src = $el.attr('src')||''
       const dataSrc = $el.attr('data-src') || $el.attr('data-lazy-src') || $el.attr('data-original') || ''
       const srcset = $el.attr('srcset') || $el.attr('data-srcset') || ''
-      if(!src && dataSrc) src = dataSrc
-      if((!src || src.startsWith('data:')) && srcset) src = pickFromSrcset(srcset)
-      if(!src || src.startsWith('data:')) return // skip invalid/base64 images
+      if((!src || isDataUrl(src)) && dataSrc) src = dataSrc
+      if((!src || isDataUrl(src)) && srcset) src = pickFromSrcset(srcset)
+      if(!src || isDataUrl(src)) return // skip invalid/base64 images
       images.push({ src, alt })
     })
     const schemaNodes: string[] = []

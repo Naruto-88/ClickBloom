@@ -12,22 +12,28 @@ export async function POST(req: NextRequest){
     const openai = new OpenAI({ apiKey })
     const ideas: Record<string,string> = {}
     const list: string[] = images // process all provided images
-    const primary = Array.isArray(keywords) && keywords[0] ? String(keywords[0]).trim() : ''
-    const ensureIncludes = (text: string, kw: string) => {
-      if(!kw) return text
-      const has = text.toLowerCase().includes(kw.toLowerCase())
-      if(has) return text
-      // If not present, append keyword once (keep concise)
-      const joined = `${text} ${kw}`.trim()
-      return joined
-    }
     const allowed = (u:string)=> /^https?:\/\//i.test(u) && /(\.png|\.jpe?g|\.gif|\.webp)([?#].*)?$/i.test(u)
     const mkFromFilename = (u:string)=>{
-      try{ const url = new URL(u); const file = url.pathname.split('/').pop()||''; const base = file.replace(/\.[a-zA-Z0-9]+$/, ''); const words = base.replace(/[-_]+/g,' ').replace(/\s+/g,' ').trim(); const kw = Array.isArray(keywords)&&keywords[0]? (' '+keywords[0]):''; return (words||'image')+kw }catch{ return (Array.isArray(keywords)&&keywords[0])? (keywords[0]+' image') : 'image' }
+      try{ const url = new URL(u); const file = url.pathname.split('/').pop()||''; const base = file.replace(/\.[a-zA-Z0-9]+$/, ''); const words = base.replace(/[-_]+/g,' ').replace(/\s+/g,' ').trim(); return words || 'image' }catch{ return 'image' }
+    }
+    const normalizeText = (text: string) => text.trim().toLowerCase()
+    const seen = new Set<string>()
+    const ensureUniqueText = (text: string) => {
+      const base = text.trim() || 'image'
+      let candidate = base
+      let normalized = normalizeText(candidate)
+      let suffix = 1
+      while(normalized && seen.has(normalized)){
+        suffix++
+        candidate = `${base} ${suffix}`
+        normalized = normalizeText(candidate)
+      }
+      if(normalized) seen.add(normalized)
+      return candidate
     }
     for(const src of list){
       if(!allowed(src)){
-        ideas[src] = ensureIncludes(mkFromFilename(src), primary)
+        ideas[src] = ensureUniqueText(mkFromFilename(src))
         continue
       }
       try{
@@ -39,10 +45,19 @@ export async function POST(req: NextRequest){
           ] }
         ]
         const r = await openai.chat.completions.create({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages: msgs as any, temperature: 0.5 })
-        const raw = r.choices?.[0]?.message?.content?.trim()?.replace(/^"|"$/g,'') || mkFromFilename(src)
-        ideas[src] = ensureIncludes(raw, primary)
+        let raw = r.choices?.[0]?.message?.content?.trim()?.replace(/^"|"$/g,'') || ''
+        let normalized = normalizeText(raw)
+        let attempts = 0
+        while(attempts < 3 && normalized && seen.has(normalized)){
+          attempts++
+          const retry = await openai.chat.completions.create({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages: msgs as any, temperature: 0.5 })
+          raw = retry.choices?.[0]?.message?.content?.trim()?.replace(/^"|"$/g,'') || ''
+          normalized = normalizeText(raw)
+        }
+        if(!raw) raw = mkFromFilename(src)
+        ideas[src] = ensureUniqueText(raw)
       }catch{
-        ideas[src] = ensureIncludes(mkFromFilename(src), primary)
+        ideas[src] = ensureUniqueText(mkFromFilename(src))
       }
     }
     return NextResponse.json({ ok:true, alts: ideas })

@@ -5,11 +5,19 @@ import WebsitePicker from '@/components/dashboard/WebsitePicker'
 import type { DateRange } from '@/components/ui/RangeDropdown'
 import KpiCard from '@/components/dashboard/KpiCard'
 import Modal from '@/components/ui/Modal'
+import { signIn } from 'next-auth/react'
 
 type Point = { date: string, clicks: number, impressions: number, ctr: number, position: number }
 
-function activeSite(){ return localStorage.getItem('activeWebsiteId') || undefined }
-function gscSiteUrl(id?:string){ if(!id) return undefined; try{ return JSON.parse(localStorage.getItem('integrations:'+id)||'{}').gscSite as string|undefined }catch{ return undefined } }
+function activeSite(){
+  if(typeof window === 'undefined') return undefined
+  try{ return localStorage.getItem('activeWebsiteId') || undefined }catch{ return undefined }
+}
+function gscSiteUrl(id?:string){
+  if(typeof window === 'undefined') return undefined
+  if(!id) return undefined
+  try{ return JSON.parse(localStorage.getItem('integrations:'+id)||'{}').gscSite as string|undefined }catch{ return undefined }
+}
 function fromB64(s:string){ try{ return atob(s) }catch{ return decodeURIComponent(s) } }
 function capitalize(s:string){ return s? s.charAt(0).toUpperCase()+s.slice(1) : s }
 function trimBrand(t:string){ if(!t) return ''; const parts=t.split('|').map(s=>s.trim()); return parts[parts.length-1] || t }
@@ -23,7 +31,23 @@ export default function PageClient(){
   const params = useSearchParams(); const router = useRouter()
   const u = params?.get('u') || ''
   const url = useMemo(()=> u? fromB64(u) : '', [u])
-  const [siteId, setSiteId] = useState<string|undefined>(()=> activeSite())
+  const toAbsoluteUrl = (raw?: string) => {
+    const value = (raw||'').trim()
+    if(!value) return ''
+    if(/^https?:\/\//i.test(value) || value.startsWith('//')) return value
+    if(!url) return value
+    try{
+      return new URL(value, url).toString()
+    }catch{
+      try{
+        return new URL(encodeURI(value), url).toString()
+      }catch{
+        return ''
+      }
+    }
+  }
+  const [siteId, setSiteId] = useState<string|undefined>(undefined)
+  useEffect(()=>{ const stored = activeSite(); if(stored) setSiteId(stored)}, [])
   const [range] = useState<DateRange>(()=>{ const y=new Date(); y.setDate(y.getDate()-1); const s=new Date(y); s.setDate(y.getDate()-27); return { from:s,to:y } })
   const [points, setPoints] = useState<Point[]>([])
   const [scan, setScan] = useState<any>(null)
@@ -59,12 +83,32 @@ export default function PageClient(){
     setToasts(t=> [...t, {id, type, text}])
     window.setTimeout(()=> setToasts(t=> t.filter(x=> x.id!==id)), 3000)
   }, [])
+  const triggerApplyPulse = useCallback((keys: string[])=>{
+    if(!keys?.length) return
+    setApplyPulse(prev=>{
+      const next = { ...prev }
+      keys.forEach(key=> { next[key] = true })
+      return next
+    })
+    keys.forEach(key => {
+      window.setTimeout(()=> setApplyPulse(prev=>{
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }), 900)
+    })
+  }, [])
   const [imgBusy, setImgBusy] = useState<Record<string, boolean>>({})
   const [imgAlts, setImgAlts] = useState<Record<string,string>>({})
   const [imgKw, setImgKw] = useState<Record<string,string>>({})
   const [imgApplied, setImgApplied] = useState<Record<string, boolean>>({})
   const [imgVariant, setImgVariant] = useState<Record<string, number>>({})
-  const [bulkBusy, setBulkBusy] = useState<'gen'|'apply'|'genapply'|null>(null)
+  const [imgGenerated, setImgGenerated] = useState<Record<string, boolean>>({})
+  const [selectedImages, setSelectedImages] = useState<Record<string, boolean>>({})
+  const [metaGenerated, setMetaGenerated] = useState(false)
+  const [schemaGenerated, setSchemaGenerated] = useState(false)
+  const [applyPulse, setApplyPulse] = useState<Record<string, boolean>>({})
+  const [bulkBusy, setBulkBusy] = useState<'gen'|'apply'|'genapply'|'gen-selected'|null>(null)
   const [bulkKw, setBulkKw] = useState("")
   const [htmlOnly, setHtmlOnly] = useState(false)
   const [pageBusy, setPageBusy] = useState(false)
@@ -79,8 +123,26 @@ export default function PageClient(){
   const [verifyStatus, setVerifyStatus] = useState<{ title?: { ok: boolean, engine?: string }, seo?: { ok: boolean, engine?: string }, desc?: { ok: boolean, engine?: string } }>({})
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
+  const [pickerReady, setPickerReady] = useState(false)
+  const [hasWpIntegration, setHasWpIntegration] = useState(false)
+  const [wpIntegrationReady, setWpIntegrationReady] = useState(false)
 
   const siteUrl = gscSiteUrl(siteId)
+  const integrations = useMemo(()=>{
+    if(typeof window==='undefined' || !siteId) return {}
+    try{ return JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}') }catch{ return {} }
+  }, [siteId])
+  const ga4Property = integrations?.ga4Property as string|undefined
+  const hasGsc = !!siteUrl
+  const hasGa4 = !!ga4Property
+  const selectedCount = Object.values(selectedImages).filter(Boolean).length
+  useEffect(()=>{ setPickerReady(true) }, [])
+  useEffect(()=>{
+    if(typeof window === 'undefined') return
+    const cfg = getWpConfig()
+    setHasWpIntegration(!!cfg)
+    setWpIntegrationReady(true)
+  }, [siteId, integrationsChanged])
 
   useEffect(()=>{
     // Load crawled pages for this site if available
@@ -141,13 +203,18 @@ export default function PageClient(){
     try{
       const cfg = getWpConfig(); if(!cfg) return
       const imgs: string[] = (scan?.details?.images||[])
-        .map((im:any)=>{ const raw=(im.src||''); return raw.startsWith('http')? raw : (raw? new URL(raw, url).toString(): '') })
+        .map((im:any)=> toAbsoluteUrl(im.src||''))
         .filter(Boolean)
       if(imgs.length===0) return
       const r = await fetch('/api/optimize/read-image-alts', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, images: imgs }) })
       const j = await r.json().catch(()=>null); if(!j?.ok) return
       const map: Record<string,string> = j.alts||{}
       setImgAlts(prev=> ({...map, ...prev}))
+      setImgGenerated(prev=>{
+        const next = { ...prev }
+        Object.keys(map||{}).forEach(abs=>{ if(abs) next[abs] = false })
+        return next
+      })
     }catch{}
   }
 
@@ -174,9 +241,27 @@ export default function PageClient(){
     } finally { setQueriesLoading(false) }
   }
 
+  const copyQuery = async (text: string) => {
+    if(!text) return
+    if(typeof navigator !== 'undefined' && navigator.clipboard?.writeText){
+      try{
+        await navigator.clipboard.writeText(text)
+        showToast('Query copied','ok')
+        return
+      }catch(err){
+        console.error(err)
+      }
+    }
+    showToast('Copy not supported','err')
+  }
+
   useEffect(()=>{ loadTrend(); loadQueries() }, [siteUrl, url, range.from, range.to])
   useEffect(()=>{ runScan() }, [url])
   useEffect(()=>{ if(scan?.details?.images?.length){ enrichImageAltsFromWP() } }, [scan?.details?.images?.length, siteId])
+  useEffect(()=>{
+    setSelectedImages({})
+    setImgGenerated({})
+  }, [scan?.details?.images?.length, url])
 
   const revertImages = async () => {
     try{
@@ -187,6 +272,7 @@ export default function PageClient(){
       if(!out?.ok){ showToast(out?.error||'Revert failed','err') }
       else{
         setImgApplied({})
+        setImgGenerated({})
         showToast('Reverted image alts','ok')
         await runScan(); await enrichImageAltsFromWP()
       }
@@ -198,7 +284,7 @@ export default function PageClient(){
       setPreviewOpen(true); setPreviewHtml('')
       const alts: Record<string,string> = {}
       ;(scan?.details?.images||[]).forEach((im:any)=>{
-        const raw = im.src||''; const abs = raw.startsWith('http')? raw : (raw? new URL(raw, url).toString(): '')
+        const abs = toAbsoluteUrl(im.src||'')
         const a = imgAlts[abs]||im.alt||''; if(abs && a) alts[abs]=a
       })
       const r = await fetch('/api/optimize/preview', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ url, alts }) })
@@ -264,6 +350,7 @@ export default function PageClient(){
   }
 
   const getWpConfig = () => {
+    if(typeof window === 'undefined') return null
     try{
       if(siteId){
         const integ = JSON.parse(localStorage.getItem('integrations:'+siteId)||'{}')
@@ -280,9 +367,13 @@ export default function PageClient(){
         }
       }
     }catch{}
-    const endpoint = localStorage.getItem('wpEndpoint')||undefined
-    const token = localStorage.getItem('wpToken')||undefined
-    return endpoint && token ? { endpoint, token } : null
+    try{
+      const endpoint = localStorage.getItem('wpEndpoint')||undefined
+      const token = localStorage.getItem('wpToken')||undefined
+      return endpoint && token ? { endpoint, token } : null
+    }catch{
+      return null
+    }
   }
 
   // Load saved postId for this page/site
@@ -452,13 +543,25 @@ export default function PageClient(){
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, schema, postId: (Number(wpPostId)>0? Number(wpPostId): undefined) }) })
     const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else { showToast('Applied to live site','ok') }
   }
-  const applyImages = async (pairs: Array<{src:string, alt:string}>, markApplied: boolean = true, htmlOnlyFlag?: boolean) => {
+  const applyImages = async (pairs: Array<{src:string, alt:string}>, markApplied: boolean = true, htmlOnlyFlag?: boolean, pulseKeys?: string[]) => {
+    if(pulseKeys?.length) triggerApplyPulse(pulseKeys)
     const cfg = getWpConfig(); if(!cfg){ alert('Add WordPress endpoint + key'); return }
     const res = await fetch('/api/optimize/apply', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ endpoint: cfg.endpoint, token: cfg.token, pageUrl: url, images: pairs, postId: (Number(wpPostId)>0? Number(wpPostId): undefined), htmlOnly: !!htmlOnlyFlag }) })
     const out = await res.json(); if(!out?.ok){ showToast(out?.error||'Apply failed','err') } else {
       setImgApplied(prev => { const next = { ...prev }; for(const p of pairs){ next[p.src] = markApplied } return next })
       showToast('Image alts updated','ok')
     }
+  }
+  const buildImagePairs = (filterGeneratedOnly?: boolean) => {
+    const rows = (scan?.details?.images||[]).map((im:any)=>{
+      const srcRaw = (im.src||'')
+      const abs = toAbsoluteUrl(srcRaw)
+      const src = srcRaw || abs
+      const alt = imgAlts[abs]||im.alt||''
+      return { src, alt, key: abs }
+    }).filter(p=> !!p.src)
+    if(!filterGeneratedOnly) return rows
+    return rows.filter(p=> p.key && imgGenerated[p.key])
   }
 
   const generateAltOnce = async (abs: string, kw?: string, variant?: number) => {
@@ -476,6 +579,51 @@ export default function PageClient(){
       }
     }
     return ''
+  }
+
+  const generateSelectedAltTexts = async () => {
+    if(!scan) return
+    if(bulkBusy) return
+    const imageMap: Record<string, any> = {}
+    const available = (scan?.details?.images||[]).map((im:any)=>{
+      const srcRaw = (im.src||'')
+      const abs = toAbsoluteUrl(srcRaw)
+      if(abs) imageMap[abs] = im
+      return abs
+    }).filter(Boolean)
+    const selected = available.filter(abs=> selectedImages[abs])
+    if(selected.length===0){
+      showToast('Select at least one image to generate','err')
+      return
+    }
+    setBulkBusy('gen-selected')
+    let successCount = 0
+    try{
+      for(const abs of selected){
+        setImgBusy(prev=> ({...prev, [abs]: true}))
+        try{
+          const current = imgAlts[abs] || imageMap[abs]?.alt || ''
+          const kw = imgKw[abs] || bulkKw || mainKw
+          const alt = await generateAltSmart(abs, current, kw)
+          if(alt){
+            setImgAlts(prev=> ({...prev, [abs]: alt }))
+            setImgGenerated(prev=> ({...prev, [abs]: true }))
+            successCount++
+          }
+        }finally{
+          setImgBusy(prev=> ({...prev, [abs]: false}))
+        }
+      }
+    }catch(e){
+      console.error(e)
+    }finally{
+      setBulkBusy(null)
+    }
+    if(successCount>0){
+      showToast(`Generated alt text for ${successCount} image${successCount===1?'':'s'}`,'ok')
+    } else {
+      showToast('No new alt text could be generated','err')
+    }
   }
 
   const applyChanges = async () => {
@@ -563,7 +711,7 @@ export default function PageClient(){
         )}
         <div>
       {/* Quick Connect banner when no integration */}
-      {!getWpConfig() && (
+      {wpIntegrationReady && !hasWpIntegration && (
         <div className="card" style={{border:'1px dashed #eab308', background:'#141427', marginBottom:12}}>
           <div className="panel-title"><strong>WordPress Not Connected</strong></div>
           <div className="muted">To apply changes live, add your WordPress endpoint and license key for this site.</div>
@@ -574,7 +722,13 @@ export default function PageClient(){
           </div>
         </div>
       )}
-      <div className="page-topbar"><WebsitePicker onChange={(site)=> setSiteId(site?.id)} /></div>
+      <div className="page-topbar">
+        {pickerReady ? (
+          <WebsitePicker onChange={(site)=> setSiteId(site?.id)} />
+        ) : (
+          <div style={{width:200, height:36}} aria-hidden="true" />
+        )}
+      </div>
       <div className="page-header">
         <h2 style={{margin:0}}>Page SEO Optimization</h2>
         <div className="breadcrumb">Home - <strong>Page SEO Optimization</strong></div>
@@ -709,18 +863,41 @@ export default function PageClient(){
             <button className="btn" style={{display: activeTab==='description'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setMetaBusy(true)
-                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                const res = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
-                const out = await res.json();
-                if(out?.ok){ if(!(keepEdits && metaEdited)) setProposedMeta(out.meta); await applyMeta(out.meta) } else { alert(out?.error||'Generate failed') }
+                const aic = getAiConfig()
+                const body:any = { url, keywords: mainKw? [mainKw]: [] }
+                if(aic){
+                  body.apiKey=aic.apiKey
+                  if(aic.model) body.model=aic.model
+                }
+                const res = await fetch('/api/ai/meta', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
+                const out = await res.json()
+                if(out?.ok){
+                  if(!(keepEdits && metaEdited)){
+                    setProposedMeta(out.meta)
+                    setMetaGenerated(true)
+                  }
+                  await applyMeta(out.meta)
+                } else { alert(out?.error||'Generate failed') }
               } finally{ setMetaBusy(false) }
             }}>{metaBusy? <span className="spinner"/> : 'Auto Optimize Meta Description'}</button>
             <button className="btn" style={{display: activeTab==='schema'? 'inline-flex':'none'}} onClick={async()=>{
               try{
                 setSchemaBusy(true)
-                { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
-                const out = await r.json(); if(out?.ok){ if(!(keepEdits && schemaEdited)) setProposedSchema(out.schema); await applySchema(out.schema) } else { alert(out?.error||'Generate failed') }
+                const aic = getAiConfig()
+                const body:any = { url, keywords: mainKw? [mainKw]: [] }
+                if(aic){
+                  body.apiKey=aic.apiKey
+                  if(aic.model) body.model=aic.model
+                }
+                const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
+                const out = await r.json()
+                if(out?.ok){
+                  if(!(keepEdits && schemaEdited)){
+                    setProposedSchema(out.schema)
+                    setSchemaGenerated(true)
+                  }
+                  await applySchema(out.schema)
+                } else { alert(out?.error||'Generate failed') }
               } finally{ setSchemaBusy(false) }
             }}>{schemaBusy? <span className="spinner"/> : 'Auto Schema Markup Generation'}</button>
             {/* Explicit post title ideas generator */}
@@ -906,8 +1083,13 @@ export default function PageClient(){
               {proposedMeta && (
                 <div style={{marginTop:10}}>
                   <div className="badge" style={{marginBottom:6}}>Proposed Description</div>
-                  <textarea className="textarea" value={proposedMeta} onChange={e=>{ setProposedMeta(e.target.value); setMetaEdited(true) }} />
-                  <div className="actions"><button className="btn" disabled={metaApplyBusy} onClick={async()=>{ try{ setMetaApplyBusy(true); await applyMeta(proposedMeta) } finally{ setMetaApplyBusy(false) } }}>{metaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button></div>
+                  <textarea className={`textarea ${metaGenerated?'generated':''}`} value={proposedMeta} onChange={e=>{ setProposedMeta(e.target.value); setMetaEdited(true); setMetaGenerated(false) }} />
+                  <div className="actions">
+                    <button className={`btn ${applyPulse['meta']?'apply-anim':''}`} disabled={metaApplyBusy} onClick={async()=>{
+                      triggerApplyPulse(['meta'])
+                      try{ setMetaApplyBusy(true); await applyMeta(proposedMeta) } finally{ setMetaApplyBusy(false) }
+                    }}>{metaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -917,16 +1099,46 @@ export default function PageClient(){
             <div style={{marginTop:12}}>
               <div className="alt-list">
                 {(scan?.details?.images||[]).map((im:any, idx:number)=>{
-                  const srcRaw = (im.src||''); const abs = srcRaw.startsWith('http')? srcRaw : (srcRaw? new URL(srcRaw, url).toString(): '')
+                  const srcRaw = (im.src||'')
+                  const abs = toAbsoluteUrl(srcRaw)
                   const prop = imgAlts[abs]||im.alt||''
                   const kw = imgKw[abs]||''
                   return (
-                    <div key={idx} className="alt-row" style={{gridTemplateColumns:'80px 1fr 220px auto'}}>
+                    <div key={idx} className="alt-row" style={{gridTemplateColumns:'34px 80px 1fr 220px auto'}}>
+                      <div className="alt-select">
+                        <input
+                          type="checkbox"
+                          checked={!!selectedImages[abs]}
+                          disabled={!abs}
+                          onChange={e=>{
+                            if(!abs) return
+                            setSelectedImages(prev=>{
+                              const next = { ...prev }
+                              if(e.target.checked) next[abs] = true
+                              else delete next[abs]
+                              return next
+                            })
+                          }}
+                          aria-label="Select image for generation"
+                        />
+                      </div>
                       <div className="alt-thumb" onClick={()=>{ if(abs) window.open(abs, '_blank') }} title="Open original">
                         {abs ? <img src={abs} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <div className="muted" style={{fontSize:12}}>No preview</div>}
                         <div className="hover">Open</div>
                       </div>
-                      <input className="input" value={prop} onChange={e=> setImgAlts(prev=> ({...prev, [abs]: e.target.value})) } />
+                      <input
+                        className={`input ${imgGenerated[abs]?'generated':''}`}
+                        value={prop}
+                        onChange={e=>{
+                          setImgAlts(prev=> ({...prev, [abs]: e.target.value}))
+                          if(!abs) return
+                          setImgGenerated(prev=> {
+                            const next = { ...prev }
+                            next[abs] = false
+                            return next
+                          })
+                        }}
+                      />
                       <input className="input" placeholder="Focus KW (optional)" value={kw} onChange={e=> setImgKw(prev=> ({...prev, [abs]: e.target.value})) } />
                       <div className="alt-actions">
                         {imgBusy[abs] ? <span className="spinner"/> : (
@@ -936,7 +1148,10 @@ export default function PageClient(){
                               try{
                                 const kw = imgKw[abs] || bulkKw || mainKw
                                 const alt = await generateAltSmart(abs, imgAlts[abs]||im.alt||'', kw)
-                                if(alt) setImgAlts(prev=> ({...prev, [abs]: alt }))
+                                if(alt){
+                                  setImgAlts(prev=> ({...prev, [abs]: alt }))
+                                  setImgGenerated(prev=> ({...prev, [abs]: true }))
+                                }
                                 else alert('Could not generate variation. Try again or use a focus keyword.')
                               }finally{ setImgBusy(prev=> ({...prev, [abs]: false})) }
                             }}>
@@ -945,11 +1160,11 @@ export default function PageClient(){
                             <button className="icon-btn" title="Open" onClick={()=> window.open(abs, '_blank')}>
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path d="M5 5h7v2H7v10h10v-5h2v7H5z"/></svg>
                             </button>
-                            <button className="icon-btn" title="Apply (HTML only)" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true, true)}>
+                            <button className={`icon-btn ${applyPulse['image-html:'+abs]?'apply-anim':''}`} title="Apply (HTML only)" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true, true, ['image-html:'+abs])}>
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                             </button>
                             {!imgApplied[abs] && (
-                              <button className="icon-btn" title="Apply" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true)}>
+                              <button className={`icon-btn ${applyPulse['image-apply:'+abs]?'apply-anim':''}`} title="Apply" onClick={()=> applyImages([{ src: (srcRaw||abs), alt: imgAlts[abs]||im.alt||'' }], true, undefined, ['image-apply:'+abs])}>
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                               </button>
                             )}
@@ -973,32 +1188,59 @@ export default function PageClient(){
                 <label className="muted" style={{display:'flex', alignItems:'center', gap:6}}>
                   <input type="checkbox" checked={htmlOnly} onChange={e=> setHtmlOnly(e.target.checked)} /> HTML-only
                 </label>
+                <span className="muted" style={{fontSize:12}}>{`Selected: ${selectedCount}`}</span>
+                <button className="btn" disabled={bulkBusy!==null || selectedCount===0} onClick={generateSelectedAltTexts}>{bulkBusy==='gen-selected'? <span className="spinner"/> : 'Generate Selected'}</button>
                 <button className="btn secondary" disabled={bulkBusy!==null} onClick={async()=>{
                   setBulkBusy('gen')
-                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''))
+                  const imgs = (scan?.details?.images||[]).map((im:any)=> toAbsoluteUrl(im.src||''))
                   // mark all rows busy
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=true); return next })
                   const kw = bulkKw || mainKw
                   const r = await fetch('/api/ai/image-alt', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ images: imgs, keywords: kw? [kw]: [] }) })
-                  const out = await r.json(); if(out?.ok){ setImgAlts(out.alts||{}) } else { alert(out?.error||'Generate failed') }
+                  const out = await r.json();
+                  if(out?.ok){
+                    setImgAlts(out.alts||{})
+                    const generated = Object.keys(out.alts||{})
+                    setImgGenerated(prev=>{
+                      const next = { ...prev }
+                      (generated.length? generated : imgs).forEach(abs=>{ if(abs) next[abs] = true })
+                      return next
+                    })
+                  } else { alert(out?.error||'Generate failed') }
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=false); return next })
                   setBulkBusy(null)
                 }}>{bulkBusy==='gen'? <span className="spinner"/> : 'Generate All'}</button>
-                <button className="btn" disabled={bulkBusy!==null} onClick={()=>{
-                  setBulkBusy('apply')
-                  const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''); return { src: (im.src||abs0), alt: imgAlts[abs0]||im.alt||'' } })
-                  applyImages(pairs, true, htmlOnly).finally(()=> setBulkBusy(null))
+                <button className={`btn ${applyPulse['image-bulk-apply']?'apply-anim':''}`} disabled={bulkBusy!==null} onClick={()=>{
+                  const handleApply = async () => {
+                    setBulkBusy('apply')
+                    const pairs = buildImagePairs(true)
+                    if(pairs.length===0){
+                      showToast('No generated alt text to apply','err')
+                      setBulkBusy(null)
+                      return
+                    }
+                    applyImages(pairs, true, htmlOnly, ['image-bulk-apply']).finally(()=> setBulkBusy(null))
+                  }
+                  handleApply()
                 }}>{bulkBusy==='apply'? <span className="spinner"/> : 'Apply All'}</button>
                 <button className="btn secondary" disabled={bulkBusy!==null} onClick={revertImages}>{bulkBusy==='apply'? <span className="spinner"/> : 'Revert Images'}</button>
                 <button className="btn" disabled={bulkBusy!==null} onClick={async()=>{
                   setBulkBusy('genapply')
-                  const imgs = (scan?.details?.images||[]).map((im:any)=> (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''))
+                  const imgs = (scan?.details?.images||[]).map((im:any)=> toAbsoluteUrl(im.src||''))
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=true); return next })
                   const kw = bulkKw || mainKw
                   const r = await fetch('/api/ai/image-alt', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ images: imgs, keywords: kw? [kw]: [] }) })
-                  const out = await r.json(); if(out?.ok){ setImgAlts(out.alts||{})
-                    const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = (im.src||'').startsWith('http')? im.src : (im.src? new URL(im.src||'', url).toString() : ''); return { src: (im.src||abs0), alt: out.alts?.[abs0]||'' } })
-                    await applyImages(pairs, true, htmlOnly)
+                  const out = await r.json();
+                  if(out?.ok){
+                    setImgAlts(out.alts||{})
+                    const generated = Object.keys(out.alts||{})
+                    setImgGenerated(prev=>{
+                      const next = { ...prev }
+                      (generated.length? generated : imgs).forEach(abs=>{ if(abs) next[abs] = true })
+                      return next
+                    })
+                    const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = toAbsoluteUrl(im.src||''); return { src: (im.src||abs0), alt: out.alts?.[abs0]||'' } })
+                    await applyImages(pairs, true, htmlOnly, ['image-bulk-apply'])
                   } else { alert(out?.error||'Generate failed') }
                   setImgBusy(prev=>{ const next={...prev}; imgs.forEach((s:string)=> next[s]=false); return next })
                   setBulkBusy(null)
@@ -1019,7 +1261,11 @@ export default function PageClient(){
                 <button className="btn" onClick={async()=>{
                   { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
                   const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
-                  const out = await r.json(); if(out?.ok){ setProposedSchema(out.schema) } else { alert(out?.error||'Generate failed') }
+                  const out = await r.json();
+                  if(out?.ok){
+                    setProposedSchema(out.schema)
+                    setSchemaGenerated(true)
+                  } else { alert(out?.error||'Generate failed') }
                 }}>Generate JSON-LD</button>
               </div>
               <div style={{display:'flex', alignItems:'center', gap:10, marginTop:10}}>
@@ -1029,8 +1275,13 @@ export default function PageClient(){
               </div>
               {proposedSchema && (
                 <div style={{marginTop:10}}>
-                  <textarea className="textarea" value={proposedSchema} onChange={e=>{ setProposedSchema(e.target.value); setSchemaEdited(true) }} style={{minHeight:160}}/>
-                  <div className="actions"><button className="btn" disabled={schemaApplyBusy} onClick={async()=>{ try{ setSchemaApplyBusy(true); await applySchema(proposedSchema) } finally{ setSchemaApplyBusy(false) } }}>{schemaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button></div>
+                  <textarea className={`textarea ${schemaGenerated?'generated':''}`} value={proposedSchema} onChange={e=>{ setProposedSchema(e.target.value); setSchemaEdited(true); setSchemaGenerated(false) }} style={{minHeight:160}}/>
+                  <div className="actions">
+                    <button className={`btn ${applyPulse['schema']?'apply-anim':''}`} disabled={schemaApplyBusy} onClick={async()=>{
+                      triggerApplyPulse(['schema'])
+                      try{ setSchemaApplyBusy(true); await applySchema(proposedSchema) } finally{ setSchemaApplyBusy(false) }
+                    }}>{schemaApplyBusy? <><span className="spinner"/> Applying…</> : 'Apply to Site'}</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1038,12 +1289,44 @@ export default function PageClient(){
         </div>
 
         {/* Queries column */}
+        {siteId && (
+          <>
+            {!hasGsc && (
+              <div className="card" style={{borderColor:'#432020', background:'#2a1212', color:'#ffb6b6', marginBottom:12}}>
+                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12}}>
+                  <div>
+                    <div><strong>Search Console</strong>: Not connected</div>
+                    <div className="muted" style={{whiteSpace:'pre-wrap'}}>Reconnect your Google account or add the GSC integration in Websites → Integrations.</div>
+                    <div className="muted">The queries and Search Console health data require a valid integration.</div>
+                  </div>
+                  <button className="btn secondary" style={{height:36}} onClick={()=> signIn('google', { callbackUrl: '/optimize/page', prompt: 'consent' as any })}>Reconnect</button>
+                </div>
+              </div>
+            )}
+            {!hasGa4 && (
+              <div className="card" style={{borderColor:'#3a2433', background:'#1b1520', color:'#ffb6b6', marginBottom:12}}>
+                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12}}>
+                  <div>
+                    <div><strong>GA4</strong>: Not connected</div>
+                    <div className="muted">Reconnect your Google account to restore Analytics permissions that power performance insights.</div>
+                  </div>
+                  <button className="btn secondary" style={{height:36}} onClick={()=> signIn('google', { callbackUrl: '/optimize/page', prompt: 'consent' as any })}>Reconnect</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
         <div className="card">
           <div className="panel-title"><div><strong>Queries</strong><div className="muted">Page Top Queries</div></div></div>
           <div className="q-list">
             {queries.slice(0,12).map((q,i)=> (
               <div key={i} className="q-row">
-                <div className="q-name">{q.query}</div>
+                <div className="q-name" style={{display:'flex', alignItems:'center', gap:8}}>
+                  <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={q.query}>{q.query}</span>
+                  <button className="icon-btn" title="Copy query" disabled={!q.query} onClick={(e)=>{ e.preventDefault(); copyQuery(q.query) }}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3H7a2 2 0 0 0-2 2v12h2V5h9V3zm3 4H9a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 14H9V9h10v12z"/></svg>
+                  </button>
+                </div>
                 <div className="q-metrics">
                   <span className="q-metric" title="Clicks">● {q.clicks}</span>
                   <span className="q-metric" title="Impressions">◉ {q.impressions}</span>
@@ -1115,6 +1398,3 @@ function Donut({ value }: { value: number }){
     </div>
   )
 }
-
-
-

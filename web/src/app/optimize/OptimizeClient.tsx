@@ -268,7 +268,7 @@ export default function OptimizeClient(){
           <tbody>
             {current.map(r=> (
               <tr key={r.url}>
-                <td className="url"><a href={`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`}>{r.url}</a></td>
+                <td className="url"><a href={`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`} target="_blank" rel="noreferrer">{r.url}</a></td>
                 <td>{r.clicks ?? '-'}</td>
                 <td>{r.impressions ?? '-'}</td>
                 <td>{r.position?.toFixed?.(1) ?? '-'}</td>
@@ -280,7 +280,7 @@ export default function OptimizeClient(){
                 <td style={{textAlign:'right'}}>
                   <div className="row-actions">
                     <button className="icon-btn" title="Scan On‑Page" onClick={()=>analyze(r.url)}>🔍</button>
-                    <button className="icon-btn" title="AI Optimize" onClick={()=>{ analyzeAI(r.url); window.location.href = `/optimize/page?u=${encodeURIComponent(btoa(r.url))}` }}>✨</button>
+                    <button className="icon-btn" title="AI Optimize" onClick={()=>{ analyzeAI(r.url); window.open(`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`, '_blank', 'noreferrer') }}>✨</button>
                     <button className="icon-btn" title={r.status==='OPTIMIZED'?'Mark Not Optimized':'Mark Optimized'} onClick={()=>markOptimized(r.url, !(r.status==='OPTIMIZED'))}>✅</button>
                     <button className="icon-btn" title="Remove" onClick={()=>remove(r.url)}>🗑️</button>
                   </div>

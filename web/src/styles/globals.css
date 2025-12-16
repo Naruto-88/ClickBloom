@@ -120,6 +120,8 @@ a{ color: inherit; text-decoration: none; }
 .form-grid{ display:grid; gap:10px; }
 .input{ height:44px; border-radius:10px; border:1px solid #2b2b47; background:#0e0e1b; color:#fff; padding:0 12px; }
 .textarea{ min-height:90px; border-radius:10px; border:1px solid #2b2b47; background:#0e0e1b; color:#fff; padding:10px 12px; resize:vertical; }
+.input.generated,
+.textarea.generated{ border-color:#a855f7; background:#1c1734; box-shadow: inset 0 0 0 1px rgba(168,85,247,0.45); color:#e0e3ff; }
 .actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:12px; }
 
 /* Range picker day styles */
@@ -231,7 +233,10 @@ a{ color: inherit; text-decoration: none; }
 
 /* Alt list rows */
 .alt-list{ display:grid; gap:10px; }
-.alt-row{ display:grid; grid-template-columns: 80px 1fr auto; align-items:center; gap:12px; border:1px dashed #2b2b47; background:#0f0f20; padding:10px; border-radius:10px; }
+.alt-row{ display:grid; grid-template-columns: 34px 80px 1fr 220px auto; align-items:center; gap:12px; border:1px dashed #2b2b47; background:#0f0f20; padding:10px; border-radius:10px; }
+.alt-select{ display:flex; align-items:center; justify-content:center; }
+.alt-select input[type=\"checkbox\"]{ width:18px; height:18px; accent-color: var(--accent); cursor:pointer; }
+.alt-select input[type=\"checkbox\"]:disabled{ accent-color:#6b7280; cursor:not-allowed; }
 .alt-thumb{ position:relative; width:80px; height:60px; border-radius:8px; border:1px solid #2b2b47; background:#111129; display:grid; place-items:center; overflow:hidden; }
 .alt-thumb .hover{ position:absolute; inset:0; background:rgba(0,0,0,.35); color:#fff; display:grid; place-items:center; opacity:0; transition:.2s; font-size:12px; }
 .alt-thumb:hover .hover{ opacity:1; cursor:pointer; }
@@ -239,6 +244,9 @@ a{ color: inherit; text-decoration: none; }
 /* Small spinner */
 .spinner{ width:16px; height:16px; border-radius:999px; border:2px solid #404065; border-top-color:#8b5cf6; animation:spin 1s linear infinite; display:inline-block; }
 @keyframes spin{ to{ transform: rotate(360deg) } }
+.btn.apply-anim,
+.icon-btn.apply-anim{ animation:applyPulse 0.9s ease-out; }
+@keyframes applyPulse{ 0%{ box-shadow:0 0 0 0 rgba(168,85,247,0) } 50%{ box-shadow:0 0 0 8px rgba(168,85,247,0.22) } 100%{ box-shadow:0 0 0 0 rgba(168,85,247,0) } }
 .alt-actions{ display:flex; gap:8px; }
 
 /* Toast notifications */
