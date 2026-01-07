@@ -21,6 +21,19 @@ function gscSiteUrl(id?:string){
 function fromB64(s:string){ try{ return atob(s) }catch{ return decodeURIComponent(s) } }
 function capitalize(s:string){ return s? s.charAt(0).toUpperCase()+s.slice(1) : s }
 function trimBrand(t:string){ if(!t) return ''; const parts=t.split('|').map(s=>s.trim()); return parts[parts.length-1] || t }
+type MissingLink = { href: string, text: string, rawHref?: string }
+function missingLinkKey(link: MissingLink){
+  return `${link.href||''}::${(link.text||'').slice(0,200)}`
+}
+function buildAutoLinkTitle(link: MissingLink){
+  const text = (link.text||'').trim()
+  if(text) return text
+  try{
+    const parsed = new URL(link.href)
+    if(parsed.hostname) return `Visit ${parsed.hostname}`
+  }catch{}
+  return 'Open link'
+}
 
 const formatDate = (d: Date) => d.toISOString().slice(0, 10)
 const toQueryString = (params: Record<string, unknown>) => Object.entries(params)
@@ -54,7 +67,7 @@ export default function PageClient(){
   const [loading, setLoading] = useState(false)
   const [queriesLoading, setQueriesLoading] = useState(false)
   const [applied, setApplied] = useState<{ title?: string, seoTitle?: string, description?: string, canonical?: string }|null>(null)
-  const [activeTab, setActiveTab] = useState<'title'|'description'|'image'|'schema'>('title')
+  const [activeTab, setActiveTab] = useState<'title'|'description'|'image'|'schema'|'links'>('title')
   const [queries, setQueries] = useState<Array<{ query: string, clicks: number, impressions: number, ctr: number, position: number }>>([])
   const [ideas, setIdeas] = useState<string[]>([])
   const [seoIdeas, setSeoIdeas] = useState<string[]>([])
@@ -68,6 +81,26 @@ export default function PageClient(){
   const [keepEdits, setKeepEdits] = useState(true)
   const [metaBusy, setMetaBusy] = useState(false)
   const [schemaBusy, setSchemaBusy] = useState(false)
+  const [missingLinks, setMissingLinks] = useState<MissingLink[]>([])
+  const [linkTitleInputs, setLinkTitleInputs] = useState<Record<string,string>>({})
+  const [linkGeneratingKey, setLinkGeneratingKey] = useState<string|undefined>(undefined)
+  const [linkApplyingKey, setLinkApplyingKey] = useState<string|undefined>(undefined)
+  const [linkApplyBusy, setLinkApplyBusy] = useState(false)
+  const [appliedLinkKeys, setAppliedLinkKeys] = useState<Set<string>>(()=> new Set())
+  const markLinkKeyApplied = (key: string)=>{
+    setAppliedLinkKeys(prev=> {
+      const next = new Set(prev)
+      next.add(key)
+      return next
+    })
+  }
+  const clearLinkKeyApplied = (key: string)=>{
+    setAppliedLinkKeys(prev=> {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }
   const [titlesBusy, setTitlesBusy] = useState(false)
   const [seoTitlesBusy, setSeoTitlesBusy] = useState(false)
   const [bothBusy, setBothBusy] = useState(false)
@@ -198,6 +231,11 @@ export default function PageClient(){
     const out = await res.json(); setScan(out?.data || null)
   }
 
+  useEffect(()=>{
+    const links = Array.isArray(scan?.details?.missingLinks) ? scan.details.missingLinks as MissingLink[] : []
+    setMissingLinks(links)
+  }, [scan?.details?.missingLinks])
+
   // Enrich image alts from WordPress when missing in the HTML
   const enrichImageAltsFromWP = async ()=>{
     try{
@@ -239,6 +277,152 @@ export default function PageClient(){
       }))
       setQueries(list)
     } finally { setQueriesLoading(false) }
+  }
+
+  const handleLinkTitleChange = (key: string, value: string) => {
+    clearLinkKeyApplied(key)
+    setLinkTitleInputs(prev=> ({ ...prev, [key]: value }))
+  }
+  const fillMissingLinkTitles = () => {
+    setLinkTitleInputs(prev=> {
+      const next = { ...prev }
+      missingLinks.forEach(link => {
+        const key = missingLinkKey(link)
+        const trimmed = (next[key]||'').trim()
+        if(!trimmed){
+          next[key] = buildAutoLinkTitle(link)
+        }
+      })
+      return next
+    })
+  }
+  const generateLinkTitleFor = async (link: MissingLink) => {
+    const key = missingLinkKey(link)
+    setLinkGeneratingKey(key)
+    try{
+      const res = await fetch('/api/ai/link-title', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({ href: link.href, text: link.text, url })
+      })
+      const out = await res.json().catch(()=>null)
+      if(res.ok && out?.ok && out?.title){
+        setLinkTitleInputs(prev=> ({ ...prev, [key]: out.title }))
+      } else {
+        showToast(out?.error || 'Failed to generate link title','err')
+      }
+    }catch(e:any){
+      showToast(e?.message || 'Failed to generate link title','err')
+    }finally{
+      setLinkGeneratingKey(prev=> prev===key ? undefined : prev)
+    }
+  }
+  const applyLinkTitleFor = async (link: MissingLink) => {
+    const key = missingLinkKey(link)
+    const title = (linkTitleInputs[key]||'').trim()
+    if(!title){
+      showToast('Enter a title before applying','err')
+      return
+    }
+    const cfg = getWpConfig()
+    if(!cfg){ alert('Add WordPress endpoint + key in Websites > WordPress Integration'); return }
+    setLinkApplyingKey(key)
+    try{
+      const res = await fetch('/api/optimize/apply', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          endpoint: cfg.endpoint,
+          token: cfg.token,
+          pageUrl: url,
+          postId: (Number(wpPostId)>0? Number(wpPostId): undefined),
+          linkTitles: [{ href: link.href, title }]
+        })
+      })
+      const out = await res.json().catch(()=>null)
+      if(!res.ok || !out?.ok){
+        showToast(out?.error || 'Apply failed','err')
+      } else {
+        showToast(`Applied "${title}"`,'ok')
+        markLinkKeyApplied(key)
+        await runScan()
+      }
+    }catch(e:any){
+      showToast(e?.message || 'Apply failed','err')
+    }finally{
+      setLinkApplyingKey(prev=> prev===key ? undefined : prev)
+    }
+  }
+  const revertLinkTitleFor = async (link: MissingLink) => {
+    const key = missingLinkKey(link)
+    const cfg = getWpConfig()
+    if(!cfg){ alert('Add WordPress endpoint + key in Websites > WordPress Integration'); return }
+    setLinkApplyingKey(key)
+    try{
+      const res = await fetch('/api/optimize/revert', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          endpoint: cfg.endpoint,
+          token: cfg.token,
+          pageUrl: url,
+          postId: (Number(wpPostId)>0? Number(wpPostId): undefined),
+          only: 'link_titles'
+        })
+      })
+      const out = await res.json().catch(()=>null)
+      if(!res.ok || !out?.ok){
+        showToast(out?.error || 'Revert failed','err')
+      } else {
+        showToast('Reverted link title','ok')
+        clearLinkKeyApplied(key)
+        await runScan()
+      }
+    }catch(e:any){
+      showToast(e?.message || 'Revert failed','err')
+    }finally{
+      setLinkApplyingKey(prev=> prev===key ? undefined : prev)
+    }
+  }
+  const applyLinkTitles = async () => {
+    const entries = missingLinks.map(link => {
+      const key = missingLinkKey(link)
+      const title = (linkTitleInputs[key]||'').trim()
+      if(!title) return null
+      return { href: link.href, title, key }
+    }).filter((entry): entry is { href: string, title: string, key: string } => !!entry)
+    if(entries.length===0){
+      showToast('Add at least one title before applying','err')
+      return
+    }
+    const cfg = getWpConfig()
+    if(!cfg){ alert('Add WordPress endpoint + key in Websites > WordPress Integration'); return }
+    setLinkApplyBusy(true)
+    try{
+      const res = await fetch('/api/optimize/apply', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          endpoint: cfg.endpoint,
+          token: cfg.token,
+          pageUrl: url,
+          postId: (Number(wpPostId)>0? Number(wpPostId): undefined),
+          linkTitles: entries.map(entry=> ({ href: entry.href, title: entry.title }))
+        })
+      })
+      const out = await res.json().catch(()=>null)
+      if(!res.ok || !out?.ok){
+        showToast(out?.error || 'Apply failed','err')
+      } else {
+        showToast(entries.length===1 ? `Applied 1 link title` : `Applied ${entries.length} link titles`,'ok')
+        await runScan()
+        entries.forEach(entry=> markLinkKeyApplied(entry.key))
+      }
+    }catch(e:any){
+      showToast(e?.message || 'Apply failed','err')
+    }finally{
+      setLinkApplyBusy(false)
+    }
   }
 
   const copyQuery = async (text: string) => {
@@ -553,15 +737,16 @@ export default function PageClient(){
     }
   }
   const buildImagePairs = (filterGeneratedOnly?: boolean) => {
-    const rows = (scan?.details?.images||[]).map((im:any)=>{
+    const mappedRows: Array<{ src: string, alt: string, key: string }> = (scan?.details?.images||[]).map((im:any): { src: string, alt: string, key: string }=>{
       const srcRaw = (im.src||'')
       const abs = toAbsoluteUrl(srcRaw)
       const src = srcRaw || abs
       const alt = imgAlts[abs]||im.alt||''
       return { src, alt, key: abs }
-    }).filter(p=> !!p.src)
+    })
+    const rows = mappedRows.filter(p=> !!p.src)
     if(!filterGeneratedOnly) return rows
-    return rows.filter(p=> p.key && imgGenerated[p.key])
+    return rows.filter((p): p is { src: string, alt: string, key: string } => !!p.key && !!imgGenerated[p.key])
   }
 
   const generateAltOnce = async (abs: string, kw?: string, variant?: number) => {
@@ -591,7 +776,7 @@ export default function PageClient(){
       if(abs) imageMap[abs] = im
       return abs
     }).filter(Boolean)
-    const selected = available.filter(abs=> selectedImages[abs])
+    const selected = available.filter((abs: string)=> selectedImages[abs])
     if(selected.length===0){
       showToast('Select at least one image to generate','err')
       return
@@ -826,9 +1011,13 @@ export default function PageClient(){
               <div className="opt-icon">{`{}`}</div>
               <div>Schema</div>
             </button>
+            <button className={`opt-tab ${activeTab==='links'?'active':''}`} onClick={()=>setActiveTab('links')}>
+              <div className="opt-icon">link</div>
+              <div>Missing Link Titles</div>
+            </button>
           </div>
-
-          {/* Pitch (content depends on tab) */}
+          <div className="opt-body">
+            {/* Pitch (content depends on tab) */}
           <div className="pitch-card">
             {activeTab==='title' && (<>
               Optimize your titles effortlessly with ClickBloom. Our AI analyzes your top‑performing keywords from Google Search Console and suggests data‑driven, SEO‑friendly titles that increase visibility and boost your click‑through rates.
@@ -842,6 +1031,9 @@ export default function PageClient(){
             {activeTab==='schema' && (<>
               Schema.org provides shared vocabularies that help search engines understand your pages. Use AI to generate structured data for Google, Microsoft, Yandex and Yahoo!
             </>)}
+            {activeTab==='links' && (<>
+              Keep your navigation accessible and SEO-friendly by adding descriptive title attributes to every link. Generate or edit missing titles below and apply them individually or in bulk.
+            </>)}
             <div style={{marginTop:6}}><a href="#" style={{textDecoration:'underline'}}>Find out more.</a></div>
           </div>
 
@@ -853,8 +1045,9 @@ export default function PageClient(){
                 setTitlesBusy(true)
                 const payload: any = { url }
                 const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
+                const aic = getAiConfig()
+                if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
                 const out = await res.json()
                 if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true) } else { alert(out?.error||'Failed to generate titles') }
               }catch(e:any){ alert(e?.message || 'Failed to generate') }
@@ -896,10 +1089,11 @@ export default function PageClient(){
                     setProposedSchema(out.schema)
                     setSchemaGenerated(true)
                   }
-                  await applySchema(out.schema)
+                    await applySchema(out.schema)
                 } else { alert(out?.error||'Generate failed') }
               } finally{ setSchemaBusy(false) }
             }}>{schemaBusy? <span className="spinner"/> : 'Auto Schema Markup Generation'}</button>
+            <button className="btn" style={{display: activeTab==='links'? 'inline-flex':'none'}} onClick={fillMissingLinkTitles}>Auto-fill Missing Link Titles</button>
             {/* Explicit post title ideas generator */}
             <button className="btn secondary" style={{display: 'none'}} disabled={titlesBusy} onClick={async()=>{
               try{
@@ -923,6 +1117,62 @@ export default function PageClient(){
             }}>{seoTitlesBusy? <><span className="spinner"/> Generating…</> : 'Generate Meta Title Ideas'}</button>
           </div>
 
+          {activeTab==='links' && (
+            <div className="missing-link-panel">
+              <div className="missing-link-header">
+                <div>
+                  <strong>Missing Link Titles</strong>
+                  <div className="muted" style={{fontSize:12}}>{`${missingLinks.length} link${missingLinks.length===1?'':'s'} missing titles`}</div>
+                </div>
+                <div className="missing-link-actions-row">
+                  <button className="btn secondary" disabled={missingLinks.length===0 || linkApplyBusy} onClick={fillMissingLinkTitles}>Auto-fill Titles</button>
+                  <button className="btn" disabled={linkApplyBusy || missingLinks.length===0} onClick={applyLinkTitles}>
+                    {linkApplyBusy? <><span className="spinner"/> Applying</> : 'Apply All'}
+                  </button>
+                </div>
+              </div>
+              {missingLinks.length===0 ? (
+                <div className="muted" style={{fontSize:13}}>No missing link titles were detected on this page.</div>
+              ) : (
+                <div className="missing-link-list">
+                  {missingLinks.map(link => {
+                    const key = missingLinkKey(link)
+                    const currentInput = linkTitleInputs[key]||''
+                    const trimmedInput = currentInput.trim()
+                    const isApplied = appliedLinkKeys.has(key)
+                    const isApplying = linkApplyingKey===key
+                    const isGenerating = linkGeneratingKey===key
+                    const hrefLabel = link.href || link.rawHref || 'Link URL not provided'
+                    const textLabel = ((link.text||hrefLabel).trim() || 'Link')
+                    return (
+                      <div key={key} className="missing-link-row">
+                        <div className="missing-link-info">
+                          <div className="missing-link-text">{textLabel}</div>
+                          <div className="missing-link-href" title={hrefLabel}>{hrefLabel}</div>
+                          <div className="missing-link-note">{isApplied ? 'Title applied' : 'Title missing'}</div>
+                        </div>
+                        <input className="input missing-link-input" value={currentInput} placeholder="Enter link title" onChange={e=>handleLinkTitleChange(key, e.target.value)} />
+                        <div className="missing-link-actions-row">
+                          <button className="btn secondary" disabled={isGenerating || linkApplyBusy || isApplying} onClick={()=>generateLinkTitleFor(link)}>
+                            {isGenerating ? <span className="spinner"/> : 'Generate'}
+                          </button>
+                          <button className={`btn ${isApplied ? 'missing-link-applied' : ''}`} disabled={isApplying || linkApplyBusy || !trimmedInput} onClick={()=>applyLinkTitleFor(link)}>
+                            {isApplying ? <><span className="spinner"/> Applying</> : (isApplied ? 'Applied' : 'Apply')}
+                          </button>
+                          {isApplied && (
+                            <button className="btn secondary" disabled={isApplying || linkApplyBusy} onClick={()=>revertLinkTitleFor(link)} style={{minWidth:72}}>
+                              {isApplying ? <span className="spinner"/> : 'Revert'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Extra generators */}
           {activeTab==='title' && (
             <div style={{display:'flex', gap:8, alignItems:'center', marginTop:8}}>
@@ -931,8 +1181,9 @@ export default function PageClient(){
                   setTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
+                  const aic = getAiConfig()
+                  if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                  const res = await fetch('/api/ai/titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
                   const out = await res.json().catch(()=>null)
                   if(out?.ok){ setIdeas(out.ideas||[]); setShowIdeas(true); setShowPostList(true); setShowMetaList(false) } else { alert(out?.error||'Failed to generate titles') }
                 } finally{ setTitlesBusy(false) }
@@ -943,8 +1194,9 @@ export default function PageClient(){
                   setSeoTitlesBusy(true)
                   const payload: any = { url }
                   const kw = (mainKw||'').trim(); if(kw) payload.keywords = [kw]
-                  { const aic = getAiConfig(); if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
-                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) }) }
+                  const aic = getAiConfig()
+                  if(aic){ (payload as any).apiKey = aic.apiKey; if(aic.model) (payload as any).model = aic.model }
+                  const res = await fetch('/api/ai/seo-titles', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
                   const out = await res.json().catch(()=>null)
                   if(out?.ok){ setSeoIdeas(out.ideas||[]); setShowIdeas(true); setShowMetaList(true); setShowPostList(false) } else { alert(out?.error||'Failed to generate SEO titles') }
                 } finally{ setSeoTitlesBusy(false) }
@@ -1203,7 +1455,7 @@ export default function PageClient(){
                     const generated = Object.keys(out.alts||{})
                     setImgGenerated(prev=>{
                       const next = { ...prev }
-                      (generated.length? generated : imgs).forEach(abs=>{ if(abs) next[abs] = true })
+                      ;(generated.length? generated : imgs).forEach((abs: string)=>{ if(abs) next[abs] = true })
                       return next
                     })
                   } else { alert(out?.error||'Generate failed') }
@@ -1236,7 +1488,7 @@ export default function PageClient(){
                     const generated = Object.keys(out.alts||{})
                     setImgGenerated(prev=>{
                       const next = { ...prev }
-                      (generated.length? generated : imgs).forEach(abs=>{ if(abs) next[abs] = true })
+                      ;(generated.length? generated : imgs).forEach((abs: string)=>{ if(abs) next[abs] = true })
                       return next
                     })
                     const pairs = (scan?.details?.images||[]).map((im:any)=>{ const abs0 = toAbsoluteUrl(im.src||''); return { src: (im.src||abs0), alt: out.alts?.[abs0]||'' } })
@@ -1259,8 +1511,10 @@ export default function PageClient(){
               <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center', marginTop:10}}>
                 <input className="input" placeholder="Main keyword (optional)" value={mainKw} onChange={e=>setMainKw(e.target.value)} />
                 <button className="btn" onClick={async()=>{
-                  { const aic = getAiConfig(); const body:any = { url, keywords: mainKw? [mainKw]: [] }; if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
-                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }) }
+                  const aic = getAiConfig()
+                  const body:any = { url, keywords: mainKw? [mainKw]: [] }
+                  if(aic){ body.apiKey=aic.apiKey; if(aic.model) body.model=aic.model }
+                  const r = await fetch('/api/ai/schema', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
                   const out = await r.json();
                   if(out?.ok){
                     setProposedSchema(out.schema)
@@ -1287,6 +1541,7 @@ export default function PageClient(){
             </div>
           )}
         </div>
+      </div>
 
         {/* Queries column */}
         {siteId && (

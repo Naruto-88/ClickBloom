@@ -4,7 +4,7 @@ export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest){
   try{
-    const { endpoint, token, pageUrl, title, seoTitle, description, canonical, schema, images, postId, htmlOnly } = await req.json()
+    const { endpoint, token, pageUrl, title, seoTitle, description, canonical, schema, images, postId, htmlOnly, linkTitles } = await req.json()
     if(!endpoint || !token || !pageUrl){ return NextResponse.json({ ok:false, error:'Missing endpoint/token/pageUrl' }, { status: 400 }) }
     const payload: any = { token, url: pageUrl }
     if(title) payload.title = title
@@ -17,6 +17,7 @@ export async function POST(req: NextRequest){
     }
     if(Array.isArray(images)) payload.images = images
     if(htmlOnly) payload.htmlOnly = true
+    if(Array.isArray(linkTitles)) payload.linkTitles = linkTitles
     if(postId) payload.postId = postId
     const res = await fetch(endpoint, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) })
     const text = await res.text(); let data; try{ data = JSON.parse(text) }catch{ data = { raw:text } }

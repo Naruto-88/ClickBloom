@@ -15,7 +15,14 @@ async function save(store:Store){ await kvSet(KEY, JSON.stringify(store)) }
 
 async function getGlobalKey(): Promise<{ provider: Provider|null, apiKey?: string }>{
   const g = await kvGet('serp:global')
-  if(g){ try{ const s = JSON.parse(g) as any; if(s?.provider && s?.apiKeyEnc){ return { provider: s.provider, apiKey: aesDecrypt(s.apiKeyEnc) } } }catch{}
+  if(g){
+    try{
+      const s = JSON.parse(g) as any
+      if(s?.provider && s?.apiKeyEnc){
+        return { provider: s.provider, apiKey: aesDecrypt(s.apiKeyEnc) }
+      }
+    }catch{}
+  }
   return { provider:null }
 }
 
@@ -67,4 +74,3 @@ export async function GET(){
   await save(store)
   return NextResponse.json({ ok:true, checked:true })
 }
-

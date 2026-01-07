@@ -94,6 +94,48 @@ function clickbloom_log($action, $details = [], $post_id = null){
   ));
 }
 
+function clickbloom_apply_link_titles($content, $linkTitles, &$changes){
+  if(!is_array($linkTitles)) return $content;
+  foreach($linkTitles as $entry){
+    $href = isset($entry['href']) ? trim($entry['href']) : '';
+    $title = isset($entry['title']) ? trim($entry['title']) : '';
+    if(!$href || !$title) continue;
+    $pattern = '~<a([^>]*\\bhref=[\'"]'.preg_quote($href,'~').'[\'"][^>]*)>~i';
+    $updated = false;
+    $content = preg_replace_callback($pattern, function($match) use(&$updated, $href, $title, &$changes){
+      if($updated) return $match[0];
+      if(preg_match('/(?<![\\w-])title\\s*=\\s*([\'"])(.*?)\\1/i', $match[1])) return $match[0];
+      $attrs = rtrim($match[1]) . ' title="'.esc_attr($title).'"';
+      $changes[] = [ 'href'=>$href, 'newTitle'=>$title, 'existingTitle'=>'' ];
+      $updated = true;
+      return '<a'.$attrs.'>';
+    }, $content, 1);
+  }
+  return $content;
+}
+
+function clickbloom_revert_link_titles($content, $linkChanges){
+  if(!is_array($linkChanges)) return $content;
+  foreach($linkChanges as $entry){
+    $href = isset($entry['href']) ? trim($entry['href']) : '';
+    $newTitle = isset($entry['newTitle']) ? $entry['newTitle'] : '';
+    $oldTitle = isset($entry['existingTitle']) ? $entry['existingTitle'] : '';
+    if(!$href || !$newTitle) continue;
+    $pattern = '~<a([^>]*\\bhref=[\'"]'.preg_quote($href,'~').'[\'"][^>]*\\btitle=[\'"]'.preg_quote($newTitle,'~').'[\'"][^>]*)>~i';
+    $restored = false;
+    $content = preg_replace_callback($pattern, function($match) use(&$restored, $oldTitle){
+      if($restored) return $match[0];
+      $attrs = preg_replace('/(?<![\\w-])title\\s*=\\s*([\'"])(.*?)\\1/i', '', $match[1], 1);
+      if($oldTitle !== null && $oldTitle !== ''){
+        $attrs = trim($attrs) . ' title="'.esc_attr($oldTitle).'"';
+      }
+      $restored = true;
+      return '<a'.$attrs.'>';
+    }, $content, 1);
+  }
+  return $content;
+}
+
 // Activation: create logs table
 register_activation_hook(__FILE__, function(){
   global $wpdb; $table = $wpdb->prefix . CLICKBLOOM_LOG_TABLE; $charset = $wpdb->get_charset_collate();
@@ -588,6 +630,7 @@ add_action('rest_api_init', function(){
         'meta' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true) ?: get_post_meta($post_id, 'clickbloom_meta_description', true),
         'canonical' => get_post_meta($post_id, '_yoast_wpseo_canonical', true) ?: get_post_meta($post_id, 'clickbloom_canonical', true),
         'schema' => json_decode(get_post_meta($post_id, 'clickbloom_schema', true) ?: 'null', true),
+        'linkTitles' => [],
       ];
       update_post_meta($post_id, 'clickbloom_backup', wp_json_encode($backup));
 
@@ -748,6 +791,17 @@ add_action('rest_api_init', function(){
           update_post_meta($post_id, 'clickbloom_backup', wp_json_encode($b));
         }
       }
+      if(isset($req['linkTitles']) && is_array($req['linkTitles']) && count($req['linkTitles'])>0){
+        $contentWithLinks = get_post_field('post_content', $post_id);
+        $linkChanges = [];
+        $contentWithLinks = clickbloom_apply_link_titles($contentWithLinks, $req['linkTitles'], $linkChanges);
+        if(!empty($linkChanges)){
+          wp_update_post([ 'ID'=>$post_id, 'post_content'=>$contentWithLinks ]);
+          $changes['link_titles'] = 'updated';
+          $backup['linkTitles'] = $linkChanges;
+          update_post_meta($post_id, 'clickbloom_backup', wp_json_encode($backup));
+        }
+      }
       // Detect likely SEO plugin for title
       $engine = 'Unknown';
       if(get_post_meta($post_id, '_yoast_wpseo_title', true) !== '') $engine = 'Yoast';
@@ -881,6 +935,11 @@ add_action('rest_api_init', function(){
             }
           }
         }
+        wp_update_post([ 'ID'=>$post_id, 'post_content'=>$content ]);
+      }
+      if(isset($b['linkTitles']) && is_array($b['linkTitles']) && count($b['linkTitles'])>0){
+        $content = get_post_field('post_content', $post_id);
+        $content = clickbloom_revert_link_titles($content, $b['linkTitles']);
         wp_update_post([ 'ID'=>$post_id, 'post_content'=>$content ]);
       }
       clickbloom_log('revert', $b, $post_id);

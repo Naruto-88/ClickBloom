@@ -79,6 +79,39 @@ export async function POST(req: Request){
     const text = $('body').text().replace(/\s+/g,' ').trim()
     const words = text ? text.split(/\s+/).length : 0
 
+    const resolveLinkHref = (value?: string|null) => {
+      if(!value) return ''
+      const trimmed = String(value).trim()
+      if(!trimmed) return ''
+      const lower = trimmed.toLowerCase()
+      if(lower.startsWith('javascript:') || lower.startsWith('mailto:') || lower.startsWith('tel:') || trimmed.startsWith('#')) return ''
+      try {
+        return new URL(trimmed, url).toString()
+      }catch{
+        return ''
+      }
+    }
+    const linkGov = $('a')
+    let linksWithTitle = 0
+    linkGov.each((_,el)=>{ if($(el).attr('title')) linksWithTitle++ })
+    const missingLinkTitles: Array<{ href: string, text: string, rawHref?: string }> = []
+    const seenLinks = new Set<string>()
+    linkGov.each((_,el)=>{
+      if($(el).attr('title')) return
+    const hrefRaw = ($(el).attr('href') || '').trim()
+    const href = resolveLinkHref(hrefRaw)
+      if(!href) return
+      const textContent = ($(el).text() || '').trim()
+      const label = ($(el).attr('aria-label') || '').trim()
+      const display = textContent || label || href
+      const key = `${href}::${display.slice(0,60)}`
+      if(seenLinks.has(key)) return
+      seenLinks.add(key)
+      missingLinkTitles.push({ href, rawHref: hrefRaw, text: display })
+    })
+    const linkCount = linkGov.length
+    const missingLinkCount = Math.max(0, linkCount - linksWithTitle)
+
     const issues: Array<{ id: string, label: string, status: 'OK'|'ISSUE' }>= []
     const pushIssue = (cond: boolean, id: string, label: string)=> issues.push({ id, label, status: cond? 'ISSUE' : 'OK' })
     pushIssue(!title, 'missing_title', 'Missing Title')
@@ -89,8 +122,7 @@ export async function POST(req: Request){
     pushIssue(!!title && title.trim().length < 30, 'short_title', 'Short Title')
     pushIssue(!$('link[rel="canonical"]').attr('href'), 'missing_canonical', 'Missing Canonical')
     pushIssue(!!title && title.trim().length > 65, 'long_title', 'Long Title')
-    const links = $('a'); let linksWithTitle=0; links.each((_,el)=>{ if($(el).attr('title')) linksWithTitle++ })
-    pushIssue(links.length>0 && (linksWithTitle/links.length) < .8, 'missing_link_titles', 'Missing Link Titles')
+    pushIssue(linkCount>0 && (linksWithTitle/linkCount) < .8, 'missing_link_titles', 'Missing Link Titles')
 
     const totalIssues = issues.filter(i=> i.status==='ISSUE').length
     const healthScore = Math.max(0, 100 - totalIssues*10)
@@ -107,7 +139,23 @@ export async function POST(req: Request){
       },
       issues,
       healthScore,
-      details: { title, meta, totalImgs, withAlt, images, schemaCount, schemas: schemaNodes, h1, h2Count, words, canonical: $('link[rel="canonical"]').attr('href')||null }
+      details: {
+        title,
+        meta,
+        totalImgs,
+        withAlt,
+        images,
+        schemaCount,
+        schemas: schemaNodes,
+        h1,
+        h2Count,
+        words,
+        canonical: $('link[rel="canonical"]').attr('href')||null,
+        linkCount,
+        linksWithTitle,
+        missingLinkCount,
+        missingLinks: missingLinkTitles
+      }
     }
     return Response.json({ ok:true, data: result })
   }catch(e:any){
