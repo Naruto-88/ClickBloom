@@ -605,7 +605,7 @@ function QueryDetails({ siteId, term, range, data, setData, gscSite }:{ siteId:s
   const [showImpr, setShowImpr] = useState(true)
   const [showPos, setShowPos] = useState(true)
   const [qRange, setQRange] = useState<DateRange>(range)
-  useEffect(()=>{ setQRange(range) }, [range.from, range.to, activePreset])
+  useEffect(()=>{ setQRange(range) }, [range.from, range.to])
   const setLastDays=(days:number)=>{ const y=new Date(); y.setDate(y.getDate()-1); const from=new Date(y.getTime()-(days-1)*86400000); setQRange({ from, to:y }) }
   useEffect(()=>{
     (async()=>{

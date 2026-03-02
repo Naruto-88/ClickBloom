@@ -1,27 +1,53 @@
-ClickBloom
+# ClickBloom: Premium AI-Assisted SEO Platform
 
-Overview
-- ClickBloom helps you audit, optimize, and monitor SEO performance.
-- Integrates with Google Search Console for insights and with WordPress (via a small connector plugin) to publish changes live.
+ClickBloom is a professional SaaS platform designed to audit, optimize, and monitor SEO performance with AI-driven insights. It provides a seamless bridge between analytics and execution.
 
-Quick start
-- Copy `.env.example` to `web/.env.local` and fill credentials.
-- From `web/`, install deps and start dev: `npm install && npm run dev`.
+## 💎 Core Functions & Features
 
-Environment variables
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Google OAuth credentials.
-- `NEXTAUTH_SECRET`: random string for NextAuth.
-- `ENABLE_PAYMENTS` (optional): `true` to enable PayPal checkout.
-- `ALLOW_FREE_ACCESS` (dev): `true` to show a temporary bypass button.
-- `PAYPAL_CLIENT_ID` (optional): PayPal REST client ID.
+### 1. AI-Assisted Site Audit & Crawling
+- **High-Velocity Crawler**: A custom-built engine with 10x concurrency (10 parallel pages) for rapid site analysis.
+- **Automated Technical SEO**: Scans for Title tags, Meta descriptions, Canonical tags, H1 usage, word count, and Image Alt text.
+- **Issue Prioritization**: Automatically categorizes findings into Critical Errors, Warnings, and Notices.
 
-WordPress integration
-- Install the ClickBloom connector plugin on your site (receives updates to title/meta/canonical/schema/image alts).
-- In ClickBloom, use Quick Connect to save your site’s endpoint URL and token.
-- Use Optimize to apply changes; the app calls your WP endpoint to update the post.
+### 2. SEO Health Engine
+- **Dynamic Scoring**: Real-time health scoring (0-100) using a complex weighted algorithm across technical, content, and metadata layers.
+- **Progress Tracking**: Visual progress bars to monitor the resolution of identified SEO issues.
 
-Routes
-- `/login` — Google sign in and optional guest access.
-- `/dashboard` — Protected dashboard.
-- `/optimize`, `/performance`, `/keywords`, `/audit`, `/reports`, `/websites` — main sections.
+### 3. Internal Link Discovery
+- **Intelligent Engine**: An automated feature that identifies missing internal link opportunities based on keyword extraction and cross-page pattern matching.
+- **Automated Suggestions**: Provides specific source/target page pairs and anchor text suggestions.
 
+### 4. Search Performance Analytics
+- **GSC Integration**: Real-time integration with Google Search Console.
+- **KPI Dashboards**: Advanced visualization of Clicks, Impressions, CTR, and Average Position.
+- **Historical Comparison**: Direct period-over-period performance analysis with automated trend indicators.
+- **Geographic & Keyword Distribution**: Specialized heatmaps and charts for deep-dive regional and keyword performance analysis.
+
+### 5. AI-Powered Optimizations
+- **Suggested Improvements**: AI-generated titles, meta descriptions, and image alt text based on page content.
+- **Direct Application**: Ability to apply optimizations through integrated workflows.
+
+### 6. Premium UI/UX Experience
+- **Deep Space Theme**: A professional visual aesthetic featuring glassmorphism, refined Inter typography, and custom SVG iconography.
+- **Micro-Animations**: Subtle pulse effects and fade-in-scale transitions for a modern SaaS feel.
+- **Responsive Layout**: Fully optimized for both desktop and mobile work.
+
+## 🛠 Tech Stack
+- **Framework**: Next.js 14 (App Router)
+- **Language**: TypeScript
+- **Auth**: NextAuth.js (Google OAuth)
+- **Styling**: Vanilla CSS (Global Design System)
+- **Scraping**: Cheerio
+
+## 🚀 Getting Started
+1. **Environment Setup**: Copy `.env.example` to `web/.env.local` and fill in Google OAuth and NextAuth credentials.
+2. **Installation**: Run `npm install` in the `web/` directory.
+3. **Dev Mode**: Start the development server with `npm run dev`.
+
+## 🔌 WordPress Integration
+- Install the **ClickBloom Connector** plugin on your site.
+- Connect your site via the ClickBloom dashboard using your endpoint and secure token.
+- Apply SEO optimizations directly from ClickBloom to your live WordPress posts.
+
+---
+*ClickBloom - Skyrocket your organic traffic in minutes, not months.*

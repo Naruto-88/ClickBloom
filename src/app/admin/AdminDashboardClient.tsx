@@ -129,7 +129,7 @@ export default function AdminDashboardClient(){
             <tbody>
               {users.map(user => {
                 const key = user.email
-                const isSelf = currentEmail && currentEmail.toLowerCase() === user.email.toLowerCase()
+                const isSelf = currentEmail ? currentEmail.toLowerCase() === user.email.toLowerCase() : false
                 const blocking = busyKey === `block:${key}`
                 const unblocking = busyKey === `unblock:${key}`
                 const deleting = busyKey === `delete:${key}`
@@ -195,7 +195,7 @@ export default function AdminDashboardClient(){
       </section>
 
       <section className="muted" style={{fontSize:13}}>
-        Need to manage licenses? Head to <a href="/admin/licenses" className="link">Admin -> Licenses</a>.
+        Need to manage licenses? Head to <a href="/admin/licenses" className="link">Admin &gt; Licenses</a>.
       </section>
     </div>
   )

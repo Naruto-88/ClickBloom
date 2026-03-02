@@ -16,6 +16,7 @@ function saveSaved(id: string, rows: Row[]){ localStorage.setItem('optimize:'+id
 
 export default function OptimizeClient(){
   const { range, setRange } = useDateRange()
+  const [mounted, setMounted] = useState(false)
   const [rows, setRows] = useState<Row[]>([])
   const [siteId, setSiteId] = useState<string|undefined>(()=> activeSiteId())
   const [query, setQuery] = useState("")
@@ -162,6 +163,7 @@ export default function OptimizeClient(){
   useEffect(()=>{ if(page>pageCount) setPage(1) }, [pageCount])
 
   const formatRange = (r:{from:Date,to:Date}) => { const f=(d:Date)=> d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); return `${f(r.from)} - ${f(r.to)}` }
+  useEffect(()=>{ setMounted(true) }, [])
 
   return (
     <>
@@ -173,7 +175,9 @@ export default function OptimizeClient(){
         <div className="breadcrumb">Home – <strong>Optimize</strong></div>
         <div style={{marginLeft:'auto'}}>
           <div className="picker" style={{gap:8}}>
-            <button onClick={()=>setOpenRange(true)} style={{background:'transparent', border:0, color:'inherit', cursor:'pointer'}}>{formatRange(range)}</button>
+            <button onClick={()=>setOpenRange(true)} style={{background:'transparent', border:0, color:'inherit', cursor:'pointer'}}>
+              {mounted ? formatRange(range) : 'Loading range...'}
+            </button>
           </div>
         </div>
         <RangePicker open={openRange} onClose={()=>setOpenRange(false)} value={range} onApply={setRange} />
@@ -268,7 +272,7 @@ export default function OptimizeClient(){
           <tbody>
             {current.map(r=> (
               <tr key={r.url}>
-                <td className="url"><a href={`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`}>{r.url}</a></td>
+                <td className="url"><a href={`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`} target="_blank" rel="noreferrer">{r.url}</a></td>
                 <td>{r.clicks ?? '-'}</td>
                 <td>{r.impressions ?? '-'}</td>
                 <td>{r.position?.toFixed?.(1) ?? '-'}</td>
@@ -280,7 +284,7 @@ export default function OptimizeClient(){
                 <td style={{textAlign:'right'}}>
                   <div className="row-actions">
                     <button className="icon-btn" title="Scan On‑Page" onClick={()=>analyze(r.url)}>🔍</button>
-                    <button className="icon-btn" title="AI Optimize" onClick={()=>{ analyzeAI(r.url); window.location.href = `/optimize/page?u=${encodeURIComponent(btoa(r.url))}` }}>✨</button>
+                    <button className="icon-btn" title="AI Optimize" onClick={()=>{ analyzeAI(r.url); window.open(`/optimize/page?u=${encodeURIComponent(btoa(r.url))}`, '_blank', 'noreferrer') }}>✨</button>
                     <button className="icon-btn" title={r.status==='OPTIMIZED'?'Mark Not Optimized':'Mark Optimized'} onClick={()=>markOptimized(r.url, !(r.status==='OPTIMIZED'))}>✅</button>
                     <button className="icon-btn" title="Remove" onClick={()=>remove(r.url)}>🗑️</button>
                   </div>
