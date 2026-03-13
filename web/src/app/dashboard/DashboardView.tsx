@@ -9,6 +9,7 @@ import ReportsGrid from "@/components/dashboard/ReportsGrid"
 import RangeDropdown from "@/components/ui/RangeDropdown"
 import { useDateRange } from "@/components/date-range"
 import { useEffect, useMemo, useState } from "react"
+import { getGscSafeDate, fmtDateISO, DateRange } from "@/lib/dates"
 
 function activeSite() { return localStorage.getItem('activeWebsiteId') || undefined }
 function getSiteUrl(id?: string) { if (!id) return undefined; try { return JSON.parse(localStorage.getItem('integrations:' + id) || '{}').gscSite as string | undefined } catch { return undefined } }
@@ -25,7 +26,7 @@ export default function DashboardView() {
 
   const formatRange = (r: { from: Date, to: Date }) => {
     const f = (d: Date) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-    return `${f(r.from)} - ${f(r.to)}`
+    return <span suppressHydrationWarning>{f(r.from)} - {f(r.to)}</span>
   }
 
   const load = async () => {
@@ -33,13 +34,11 @@ export default function DashboardView() {
     if (!siteUrl) return
     let start = new Date(range.from)
     let end = new Date(range.to)
-    // Clamp end to yesterday to avoid GSC latency
-    const today = new Date(); const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
-    if (end > yesterday) end = yesterday
+    const y = getGscSafeDate()
+    if (end > y) end = y
     if (start > end) start = new Date(end)
-    const fmtDate = (d: Date) => d.toISOString().slice(0, 10)
     const qs = (p: any) => Object.entries(p).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
-    const currRes = await fetch(`/api/google/gsc/search?${qs({ site: siteUrl, start: fmtDate(start), end: fmtDate(end) })}`)
+    const currRes = await fetch(`/api/google/gsc/search?${qs({ site: siteUrl, start: fmtDateISO(start), end: fmtDateISO(end) })}`)
     if (!currRes.ok) { console.warn('GSC search error', await currRes.text()); setPoints([]); setTotals({ clicks: 0, impressions: 0, ctr: 0, position: 0, prevClicks: 0, prevImpressions: 0, prevCtr: 0, prevPosition: 0 }); return }
     const curr = await currRes.json()
     const rows: any[] = curr.rows || []
@@ -50,7 +49,7 @@ export default function DashboardView() {
     const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
     const prevEnd = new Date(start); prevEnd.setDate(start.getDate() - 1)
     const prevStart = new Date(prevEnd); prevStart.setDate(prevEnd.getDate() - (days - 1))
-    const prevRes = await fetch(`/api/google/gsc/search?${qs({ site: siteUrl, start: fmtDate(prevStart), end: fmtDate(prevEnd) })}`)
+    const prevRes = await fetch(`/api/google/gsc/search?${qs({ site: siteUrl, start: fmtDateISO(prevStart), end: fmtDateISO(prevEnd) })}`)
     const prev = prevRes.ok ? await prevRes.json() : { rows: [] }
     const sum = (arr: any[], key: string) => arr.reduce((a, r) => a + (r[key] || 0), 0)
     const cClicks = sum(rows, 'clicks'); const pClicks = sum(prev.rows || [], 'clicks')
@@ -75,8 +74,11 @@ export default function DashboardView() {
         </div>
         <div className="picker" style={{ gap: 8 }}>
           <RangeDropdown value={range} onChange={setRange} />
+          <div className="muted" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="badge" style={{ background: '#1a1a33', color: '#94a3b8', border: '1px solid #2b2b47' }} suppressHydrationWarning>Data as of {getGscSafeDate().toLocaleDateString()}</span>
+          </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} /> Compare prev
+            <input type="checkbox" checked={compare} onChange={e => e && setCompare(e.target.checked)} /> Compare prev
           </label>
         </div>
       </div>
@@ -89,57 +91,68 @@ export default function DashboardView() {
       </section>
 
       <ConnectionsGate>
-        <div className="split">
-          <PerformancePanel points={points} />
-          <div className="card health-card">
-            <div className="panel-title">
-              <strong>Website Health</strong>
-              <span className="badge">SEO Technical Analysis</span>
+        {!getSiteUrl(activeSite()) ? (
+          <div className="card" style={{ padding: 40, textAlign: 'center', display: 'grid', gap: 16, placeItems: 'center' }}>
+            <div style={{ fontSize: 40 }}>🔌</div>
+            <div>
+              <h3 style={{ margin: 0 }}>Search Console Not Connected</h3>
+              <p className="muted">Please connect your website to Google Search Console in the Websites tab to see performance data.</p>
             </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontSize: '32px', fontWeight: 800, color: 'var(--success)' }}>Excellent</div>
-              <span className="badge-pill status-ok">Optimized</span>
-            </div>
-
-            <div className="muted" style={{ fontSize: '14px' }}>Found a few minor opportunities for growth.</div>
-
-            <div className="inner-card error">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong>Critical Errors</strong>
-                <span className="badge" style={{ background: 'var(--danger)', color: 'white', border: 'none' }}>1</span>
+            <a href="/websites" className="btn" style={{ background: '#6d28d9', padding: '10px 24px' }}>Go to Websites</a>
+          </div>
+        ) : (
+          <div className="split">
+            <PerformancePanel points={points} />
+            <div className="card health-card">
+              <div className="panel-title">
+                <strong>Website Health</strong>
+                <span className="badge">SEO Technical Analysis</span>
               </div>
-              <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>Missing canonical tags on some pages.</div>
-            </div>
 
-            <div className="inner-card warning">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong>Warnings</strong>
-                <span className="badge" style={{ background: 'var(--warning)', color: 'white', border: 'none' }}>0</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: '32px', fontWeight: 800, color: 'var(--success)' }}>Excellent</div>
+                <span className="badge-pill status-ok">Optimized</span>
               </div>
-              <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>All internal redirects are optimal.</div>
-            </div>
 
-            <div className="inner-card success">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong>Optimization</strong>
-                <span className="badge" style={{ background: 'var(--success)', color: 'white', border: 'none' }}>Active</span>
-              </div>
-              <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>AI-driven site audit complete.</div>
-            </div>
+              <div className="muted" style={{ fontSize: '14px' }}>Found a few minor opportunities for growth.</div>
 
-            <div style={{ marginTop: 'auto', paddingTop: 16 }}>
-              <div className="muted" style={{ fontSize: '13px', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                <span>Resolution Progress</span>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>82%</span>
+              <div className="inner-card error">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong>Critical Errors</strong>
+                  <span className="badge" style={{ background: 'var(--danger)', color: 'white', border: 'none' }}>1</span>
+                </div>
+                <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>Missing canonical tags on some pages.</div>
               </div>
-              <div className="progress-bar-wrap">
-                <div className="progress-bar-fill" style={{ width: '82%' }} />
+
+              <div className="inner-card warning">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong>Warnings</strong>
+                  <span className="badge" style={{ background: 'var(--warning)', color: 'white', border: 'none' }}>0</span>
+                </div>
+                <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>All internal redirects are optimal.</div>
               </div>
-              <div className="muted" style={{ fontSize: '12px' }}>Excellent progress! Keep optimizing to reach 100%.</div>
+
+              <div className="inner-card success">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong>Optimization</strong>
+                  <span className="badge" style={{ background: 'var(--success)', color: 'white', border: 'none' }}>Active</span>
+                </div>
+                <div className="muted" style={{ fontSize: '13px', marginTop: 4 }}>AI-driven site audit complete.</div>
+              </div>
+
+              <div style={{ marginTop: 'auto', paddingTop: 16 }}>
+                <div className="muted" style={{ fontSize: '13px', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Resolution Progress</span>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>82%</span>
+                </div>
+                <div className="progress-bar-wrap">
+                  <div className="progress-bar-fill" style={{ width: '82%' }} />
+                </div>
+                <div className="muted" style={{ fontSize: '12px' }}>Excellent progress! Keep optimizing to reach 100%.</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </ConnectionsGate>
 
       <div className="two-col" style={{ marginTop: 16 }}>

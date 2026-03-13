@@ -48,7 +48,7 @@ Return only JSON.`
     const content = resp.choices?.[0]?.message?.content || '{"ideas":[]}'
     const data = JSON.parse(content)
     let ideas: string[] = Array.isArray(data.ideas) ? data.ideas.slice(0,5) : []
-    ideas = ideas.map((s:string)=> (s||'').trim().replace(/\s+/g,' ').slice(0,65))
+    ideas = ideas.map((s:string)=> (s||'').trim().replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').replace(/^HTML\s*$/i, '').replace(/HTML/ig, '').replace(/\s+/g,' ').slice(0,65).trim())
     return NextResponse.json({ ok:true, ideas })
   }catch(e:any){
     return NextResponse.json({ ok:false, error: e?.message || 'AI SEO titles failed' }, { status: 500 })

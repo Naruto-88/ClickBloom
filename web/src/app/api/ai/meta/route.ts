@@ -74,7 +74,8 @@ export async function POST(req: NextRequest){
       messages: [ { role:'user', content: prompt } ],
       temperature: 0.4
     })
-    const out = response.choices?.[0]?.message?.content?.trim()?.replace(/^\"|\"$/g,'') || ''
+    const outRaw = response.choices?.[0]?.message?.content?.trim() || ''
+    const out = outRaw.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').replace(/^\"|\"$/g,'').trim()
 
     const record = buildMetaRecord(out, model, prompt, ctx)
     await writeMetaCache(cacheKey, record)

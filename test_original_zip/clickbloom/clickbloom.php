@@ -625,10 +625,7 @@ add_action('rest_api_init', function(){
         $post_id = url_to_postid($url);
         if(!$post_id){
           $path = parse_url($url, PHP_URL_PATH);
-          $path = $path ? $path : '/';
-          if($path === '/' || $path === ''){
-            $post_id = (int)get_option('page_on_front');
-          } else {
+          if($path){
             $post_id = url_to_postid(home_url($path));
             if(!$post_id){
               $slug = basename(untrailingslashit($path));
@@ -640,7 +637,7 @@ add_action('rest_api_init', function(){
           }
         }
       }
-      if(!$post_id) return new WP_REST_Response(['ok'=>false,'error'=>'Post not found. Please try entering the WordPress Post ID manually.'], 404);
+      if(!$post_id) return new WP_REST_Response(['ok'=>false,'error'=>'Post not found'], 404);
       $changes = [];
       $backup = [
         'title' => get_post_field('post_title', $post_id),
@@ -886,27 +883,8 @@ add_action('rest_api_init', function(){
         }
       }
       if(!$opt['activated']) return new WP_REST_Response(['ok'=>false,'error'=>'Not activated'], 401);
-      $post_id = intval($req['postId']); $url = esc_url_raw($req['url']); 
-      if(!$post_id && $url){ 
-        $post_id = url_to_postid($url); 
-        if(!$post_id){
-          $path = parse_url($url, PHP_URL_PATH);
-          $path = $path ? $path : '/';
-          if($path === '/' || $path === ''){
-            $post_id = (int)get_option('page_on_front');
-          } else {
-            $post_id = url_to_postid(home_url($path));
-            if(!$post_id){
-              $slug = basename(untrailingslashit($path));
-              if($slug){
-                $posts = get_posts(['name'=>$slug, 'post_type'=>['post','page','product'], 'post_status'=>'publish', 'posts_per_page'=>1]);
-                if($posts) $post_id = $posts[0]->ID;
-              }
-            }
-          }
-        }
-      }
-      if(!$post_id) return new WP_REST_Response(['ok'=>false,'error'=>'Post not found. Please try entering the WordPress Post ID manually.'], 404);
+      $post_id = intval($req['postId']); $url = esc_url_raw($req['url']); if(!$post_id && $url){ $post_id = url_to_postid($url); }
+      if(!$post_id) return new WP_REST_Response(['ok'=>false,'error'=>'Post not found'], 404);
       $backup = get_post_meta($post_id, 'clickbloom_backup', true); if(!$backup) return new WP_REST_Response(['ok'=>false,'error'=>'No backup found'], 404);
       $b = json_decode($backup, true); if(!is_array($b)) return new WP_REST_Response(['ok'=>false,'error'=>'Invalid backup'], 400);
       if(isset($b['title'])){ wp_update_post(['ID'=>$post_id, 'post_title'=>wp_strip_all_tags($b['title'])]); }
